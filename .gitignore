@@ -7,3 +7,17 @@ venv/
 .idea/
 .vscode/
 *.db
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# debug session logs (agent_debug.py)
+debug-*.log
+*.log
+
+# OS / editor (اختیاری ولی مفید)
+.DS_Store
+Thumbs.db
+
+debug-dd4a47.log

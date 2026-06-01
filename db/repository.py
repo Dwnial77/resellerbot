@@ -281,6 +281,32 @@ class ClientRepository:
             q = q.where(ClientRecord.panel_id == panel_id)
         return await self.session.scalar(q)
 
+    async def get_for_reseller_email(
+        self, reseller_tg_id: int, email: str
+    ) -> ClientRecord | None:
+        return await self.session.scalar(
+            select(ClientRecord).where(
+                ClientRecord.reseller_tg_id == reseller_tg_id,
+                ClientRecord.email == email,
+            )
+        )
+
+    async def list_for_reseller_on_panels(
+        self, reseller_tg_id: int, panel_ids: set[int] | list[int]
+    ) -> list[ClientRecord]:
+        if not panel_ids:
+            return []
+        ids = list(panel_ids)
+        result = await self.session.scalars(
+            select(ClientRecord)
+            .where(
+                ClientRecord.reseller_tg_id == reseller_tg_id,
+                ClientRecord.panel_id.in_(ids),
+            )
+            .order_by(ClientRecord.created_at.desc())
+        )
+        return list(result.all())
+
     async def email_exists(self, email: str, *, panel_id: int) -> bool:
         row = await self.get_by_email(email, panel_id=panel_id)
         return row is not None

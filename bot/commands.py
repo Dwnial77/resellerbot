@@ -2,7 +2,6 @@
 
 import logging
 
-from agent_debug import agent_log
 from aiogram import Bot
 from aiogram.types import (
     BotCommand,
@@ -18,6 +17,8 @@ RESELLER_COMMANDS = [
 
 ADMIN_COMMANDS = [
     BotCommand(command="admin", description="راهنمای کوتاه ادمین"),
+    BotCommand(command="version", description="نسخه ربات"),
+    BotCommand(command="bot_update", description="آپدیت ربات با ZIP"),
     BotCommand(command="list_resellers", description="هاب مدیریت ریسلرها"),
     BotCommand(command="set_quota", description="تغییر سقف حجم (آیدی و GB)"),
     BotCommand(command="set_max_clients", description="سقف تعداد سرویس"),
@@ -38,30 +39,11 @@ ADMIN_COMMANDS = [
 
 async def setup_bot_commands(bot: Bot, admin_ids: list[int]) -> None:
     await bot.set_my_commands(RESELLER_COMMANDS, scope=BotCommandScopeDefault())
-    # #region agent log
-    agent_log(
-        "A",
-        "commands.py:setup_bot_commands",
-        "default scope ok",
-        {"command_count": len(RESELLER_COMMANDS)},
-        run_id="post-fix",
-    )
-    # #endregion
     for admin_id in admin_ids:
-        # Private chat: use BotCommandScopeChat (ChatMember is for groups only).
         await bot.set_my_commands(
             ADMIN_COMMANDS,
             scope=BotCommandScopeChat(chat_id=admin_id),
         )
-        # #region agent log
-        agent_log(
-            "A",
-            "commands.py:setup_bot_commands",
-            "admin chat scope ok",
-            {"admin_id": admin_id, "scope": "chat"},
-            run_id="post-fix",
-        )
-        # #endregion
     logger.info(
         "Bot commands registered (default + %d admin scope(s))",
         len(admin_ids),

@@ -1,0 +1,17 @@
+[Unit]
+Description=Reseller Telegram Bot for 3x-ui
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=resellerbot
+Group=resellerbot
+WorkingDirectory=/opt/resellerbot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/resellerbot/.venv/bin/python -m bot.main
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

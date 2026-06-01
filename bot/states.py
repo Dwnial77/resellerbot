@@ -51,3 +51,7 @@ class AddResellerStates(StatesGroup):
 class EditResellerStates(StatesGroup):
     value = State()
     pick_inbounds = State()
+
+
+class BotUpdateStates(StatesGroup):
+    waiting_zip = State()

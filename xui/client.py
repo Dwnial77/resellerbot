@@ -10,7 +10,6 @@ from urllib.parse import quote, unquote, urlparse
 
 import httpx
 
-from agent_debug import agent_log
 from xui.inbound_flow import resolve_flow_for_inbound_ids
 from xui.link_fragment import (
     apply_fragment_to_vless_link,
@@ -330,31 +329,11 @@ class XuiClient:
             ),
             inboundIds=inbound_ids,
         )
-        # #region agent log
-        agent_log(
-            "C",
-            "xui/client.py:create_client",
-            "POST clients/add",
-            {
-                "inbound_ids": inbound_ids,
-                "has_group": bool(group_name),
-                "flow_set": bool(flow),
-            },
-        )
-        # #endregion
         result = await self._request(
             "POST",
             "/panel/api/clients/add",
             json=payload.model_dump(),
         )
-        # #region agent log
-        agent_log(
-            "C",
-            "xui/client.py:create_client",
-            "clients/add ok",
-            {"email_len": len(email)},
-        )
-        # #endregion
         if group.strip():
             try:
                 await self.assign_client_to_group(email, group)
@@ -383,17 +362,6 @@ class XuiClient:
                 "GET", f"/panel/api/clients/get/{quote(email, safe='')}"
             )
         except XuiError as e:
-            # #region agent log
-            agent_log(
-                "B",
-                "xui/client.py:get_client",
-                "GET client failed",
-                {
-                    "is_not_found": _is_client_not_found(e),
-                    "error": str(e)[:200],
-                },
-            )
-            # #endregion
             if _is_client_not_found(e):
                 return None
             raise
@@ -525,22 +493,6 @@ class XuiClient:
             vless_configs = enrich_vless_remarks_from_inbounds(vless_configs, inbounds)
         except XuiError as e:
             logger.warning("list_inbounds for remark enrichment failed: %s", e)
-        # #region agent log
-        agent_log(
-            "G",
-            "xui/client.py:get_client_delivery",
-            "vless delivery",
-            {
-                "count": len(vless_configs),
-                "has_hash": [("#" in c.link) for c in vless_configs],
-                "fragment_tail": [
-                    c.link.rsplit("#", 1)[-1][:40] if "#" in c.link else ""
-                    for c in vless_configs
-                ],
-            },
-            run_id="post-fix",
-        )
-        # #endregion
 
         resolved_sub_id = (sub_id or "").strip() or None
         if not resolved_sub_id:

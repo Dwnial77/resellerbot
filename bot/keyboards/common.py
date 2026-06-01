@@ -31,9 +31,29 @@ def admin_main_kb() -> ReplyKeyboardMarkup:
                 KeyboardButton(text=L.SET_PANEL_RESELLER),
                 KeyboardButton(text=L.PANELS),
             ],
-            [KeyboardButton(text=L.ADMIN_HELP)],
+            [
+                KeyboardButton(text=L.BOT_UPDATE),
+                KeyboardButton(text=L.ADMIN_HELP),
+            ],
         ],
         resize_keyboard=True,
+    )
+
+
+def bot_update_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ اعمال و ری‌استارت",
+                    callback_data="upd:apply",
+                ),
+                InlineKeyboardButton(
+                    text=L.CANCEL,
+                    callback_data="upd:cancel",
+                ),
+            ],
+        ]
     )
 
 
@@ -567,6 +587,14 @@ def template_wizard_confirm_kb() -> InlineKeyboardMarkup:
     )
 
 
+def create_cancel_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=L.CANCEL, callback_data="create:cancel")],
+        ]
+    )
+
+
 def template_picker_kb(templates: list[ServiceTemplate]) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text=tpl.name, callback_data=f"tpl:{tpl.id}")]
@@ -574,6 +602,9 @@ def template_picker_kb(templates: list[ServiceTemplate]) -> InlineKeyboardMarkup
     ]
     rows.append(
         [InlineKeyboardButton(text=L.MANUAL_ENTRY, callback_data="create:manual")]
+    )
+    rows.append(
+        [InlineKeyboardButton(text=L.CANCEL, callback_data="create:cancel")]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -584,6 +615,11 @@ def client_name_kb() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text=L.RANDOM_NAME, callback_data="create:auto_name"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.CANCEL, callback_data="create:cancel"
                 )
             ],
         ]

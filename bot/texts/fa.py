@@ -36,6 +36,13 @@ RESELLER_ADDED = (
 NO_PANEL_ACCESS = (
     "پنل اختصاصی شما در دسترس نیست. با ادمین تماس بگیرید."
 )
+SERVICE_NOT_FOUND = "سرویس یافت نشد."
+SERVICE_PANEL_UNAVAILABLE = (
+    "پنل سرویس (#{panel_id}) در دسترس نیست (غیرفعال یا قطع). با ادمین تماس بگیرید."
+)
+NO_ACCESSIBLE_SERVICES = (
+    "سرویس فعالی روی پنل‌های در دسترس ندارید. با ادمین تماس بگیرید."
+)
 
 PANEL_LIST_HEADER = "پنل‌های 3x-ui:"
 PANEL_LIST_EMPTY = "پنلی ثبت نشده است."
@@ -215,6 +222,7 @@ TEMPLATE_WIZARD_CANCELLED = "افزودن قالب لغو شد."
 CREATE_PICK_TEMPLATE = (
     "یک قالب آماده انتخاب کنید، یا «ورود دستی» برای وارد کردن حجم و انقضا."
 )
+CREATE_CANCELLED = "ساخت سرویس لغو شد."
 CREATE_VOLUME_PROMPT = "حجم سرویس را به گیگابایت وارد کنید (مثلاً 10):"
 CREATE_EXPIRY_PROMPT = "تعداد روز انقضا را وارد کنید (0 = نامحدود):"
 CREATE_CLIENT_NAME_PROMPT = (
@@ -287,3 +295,37 @@ COMMENT_UPDATED = "کامنت ذخیره شد."
 NO_SERVICES = "هنوز سرویسی نساخته‌اید."
 INVALID_INPUT = "ورودی نامعتبر است. دوباره تلاش کنید."
 RATE_LIMITED = "تعداد درخواست زیاد است. چند ثانیه صبر کنید."
+
+VERSION_INFO = "نسخه ربات: {version}"
+
+BOT_UPDATE_PROMPT = (
+    "آپدیت ربات (نسخه فعلی: {version})\n\n"
+    "فایل ZIP ریلیز GitHub را بفرستید (حداکثر {max_mb} مگابایت).\n"
+    "پس از تأیید، سرویس ری‌استارت می‌شود و آپدیت هنگام بالا آمدن اعمال می‌شود.\n"
+    "دستور: /bot_update"
+)
+BOT_UPDATE_NOT_ZIP = "لطفاً یک فایل ZIP بفرستید."
+BOT_UPDATE_TOO_LARGE = "حجم فایل بیش از حد مجاز است."
+BOT_UPDATE_READY = (
+    "بسته آماده است.\n"
+    "فعلی: {current}\n"
+    "هدف: {target}\n"
+    "فایل: {filename}\n\n"
+    "با «اعمال و ری‌استارت» ادامه دهید."
+)
+BOT_UPDATE_CANCELLED = "آپدیت لغو شد."
+BOT_UPDATE_NO_PENDING = "بسته‌ای در صف نیست."
+BOT_UPDATE_RESTARTING = (
+    "در حال ری‌استارت سرویس `{service}`…\n"
+    "پس از بالا آمدن، نسخه {target} اعمال می‌شود."
+)
+BOT_UPDATE_RESTART_MANUAL = (
+    "ری‌استارت خودکار انجام نشد.\n"
+    "نسخه هدف: {target}\n"
+    "جزئیات: {detail}\n\n"
+    "دستی: sudo systemctl restart {service}"
+)
+BOT_UPDATE_RESULT_OK = (
+    "ربات به‌روز شد: {previous} → {new_version}\n{message}"
+)
+BOT_UPDATE_RESULT_FAIL = "آپدیت ناموفق بود ({previous}): {message}"

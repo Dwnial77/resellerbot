@@ -9,6 +9,7 @@ from bot.keyboards import labels as btn
 from bot.keyboards.common import (
     client_name_kb,
     confirm_create_kb,
+    create_cancel_kb,
     delete_confirm_kb,
     expiry_mode_kb,
     reset_traffic_confirm_kb,
@@ -20,7 +21,6 @@ from bot.keyboards.common import (
 )
 from bot.states import CreateServiceStates, EditServiceStates, ExtendExpiryStates
 from bot.texts import fa as t
-from agent_debug import agent_log
 from bot.utils.edit_service import (
     InvalidEditInputError,
     format_limit_ip_label,
@@ -51,7 +51,15 @@ from services.reseller_labels import (
     email_prefix,
     normalize_client_suffix,
 )
+from services.panel_registry import PanelRegistry
 from services.reseller_service import ResellerService
+from bot.utils.service_resolve import (
+    answer_resolve_callback,
+    answer_resolve_message,
+    list_accessible_clients,
+    open_service_context,
+)
+from services.panel_resolve import ServiceNotFoundError, ServicePanelUnavailableError
 from xui.client import XuiClient, XuiError
 
 router = Router()
@@ -139,7 +147,9 @@ async def start_create(message: Message, state: FSMContext) -> None:
         )
         return
     await state.set_state(CreateServiceStates.volume)
-    await message.answer(t.CREATE_VOLUME_PROMPT)
+    await message.answer(
+        t.CREATE_VOLUME_PROMPT, reply_markup=create_cancel_kb()
+    )
 
 
 @router.callback_query(F.data == "create:manual")
@@ -153,7 +163,9 @@ async def create_manual(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await state.set_state(CreateServiceStates.volume)
     if callback.message:
-        await callback.message.answer(t.CREATE_VOLUME_PROMPT)  # type: ignore[union-attr]
+        await callback.message.answer(  # type: ignore[union-attr]
+            t.CREATE_VOLUME_PROMPT, reply_markup=create_cancel_kb()
+        )
     await callback.answer()
 
 
@@ -205,7 +217,9 @@ async def process_volume(message: Message, state: FSMContext) -> None:
         return
     await state.update_data(volume_gb=volume)
     await state.set_state(CreateServiceStates.expiry)
-    await message.answer(t.CREATE_EXPIRY_PROMPT)
+    await message.answer(
+        t.CREATE_EXPIRY_PROMPT, reply_markup=create_cancel_kb()
+    )
 
 
 @router.message(CreateServiceStates.expiry)
@@ -314,10 +328,16 @@ async def create_auto_name(
     await callback.answer()
 
 
-@router.callback_query(CreateServiceStates.confirm, F.data == "create:cancel")
+@router.callback_query(F.data == "create:cancel")
 async def cancel_create(callback: CallbackQuery, state: FSMContext) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
     await state.clear()
-    await callback.message.edit_text("لغو شد.")  # type: ignore[union-attr]
+    try:
+        await callback.message.edit_text(t.CREATE_CANCELLED)
+    except Exception:
+        await callback.message.answer(t.CREATE_CANCELLED)
     await callback.answer()
 
 
@@ -337,20 +357,6 @@ async def confirm_create(
         return
 
     data = await state.get_data()
-    # #region agent log
-    agent_log(
-        "E",
-        "reseller.py:confirm_create",
-        "confirm entry",
-        {
-            "has_volume_gb": data.get("volume_gb") is not None,
-            "has_client_suffix": bool(data.get("client_suffix")),
-            "create_locked": bool(data.get("create_locked")),
-            "inbound_preview": data.get("email_preview"),
-        },
-        run_id="post-fix",
-    )
-    # #endregion
     if data.get("create_locked"):
         await callback.answer("در حال ساخت سرویس…", show_alert=True)
         return
@@ -359,18 +365,6 @@ async def confirm_create(
     expiry_days = data.get("expiry_days", 0)
     client_suffix = data.get("client_suffix")
     if volume_gb is None or not client_suffix:
-        # #region agent log
-        agent_log(
-            "B",
-            "reseller.py:confirm_create",
-            "missing FSM fields",
-            {
-                "volume_gb": volume_gb,
-                "client_suffix": bool(client_suffix),
-            },
-            run_id="post-fix",
-        )
-        # #endregion
         await state.clear()
         await callback.answer(
             "اطلاعات ساخت ناقص یا منقضی شده. دوباره از «ساخت سرویس» شروع کنید.",
@@ -409,15 +403,6 @@ async def confirm_create(
             return
 
     await state.clear()
-    # #region agent log
-    agent_log(
-        "E",
-        "reseller.py:confirm_create",
-        "create ok",
-        {"email_len": len(record.email)},
-        run_id="post-fix",
-    )
-    # #endregion
     qr_markup = (
         vless_qr_kb(record.email, delivery.vless_configs)
         if delivery.vless_configs
@@ -446,24 +431,30 @@ async def confirm_create_stale(callback: CallbackQuery) -> None:
     )
 
 
+async def _accessible_service_emails(
+    session, registry: PanelRegistry, reseller_tg_id: int
+) -> list[str]:
+    clients = await list_accessible_clients(session, registry, reseller_tg_id)
+    return [c.email for c in clients]
+
+
 @router.message(F.text == btn.MY_SERVICES)
-async def my_services(message: Message) -> None:
+async def my_services(message: Message, panel_registry: PanelRegistry) -> None:
     if not message.from_user:
         return
     async with get_session_factory()() as session:
-        from db.repository import ClientRepository
-
         repo = ResellerRepository(session)
         reseller = await repo.get(message.from_user.id)
         if not reseller or not reseller.is_active:
             await message.answer(t.NOT_RESELLER)
             return
-        clients = await ClientRepository(session).list_for_reseller(message.from_user.id)
+        emails = await _accessible_service_emails(
+            session, panel_registry, message.from_user.id
+        )
 
-    if not clients:
-        await message.answer(t.NO_SERVICES)
+    if not emails:
+        await message.answer(t.NO_ACCESSIBLE_SERVICES)
         return
-    emails = [c.email for c in clients]
     await message.answer(
         "سرویس‌های شما — یکی را انتخاب کنید:",
         reply_markup=service_list_kb(emails),
@@ -471,19 +462,21 @@ async def my_services(message: Message) -> None:
 
 
 @router.callback_query(F.data == "svc:back")
-async def services_back(callback: CallbackQuery) -> None:
+async def services_back(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
     if not callback.from_user:
         return
     async with get_session_factory()() as session:
-        from db.repository import ClientRepository
-
-        clients = await ClientRepository(session).list_for_reseller(callback.from_user.id)
-    if not clients:
-        await callback.message.edit_text(t.NO_SERVICES)  # type: ignore[union-attr]
+        emails = await _accessible_service_emails(
+            session, panel_registry, callback.from_user.id
+        )
+    if not emails:
+        await callback.message.edit_text(t.NO_ACCESSIBLE_SERVICES)  # type: ignore[union-attr]
     else:
         await callback.message.edit_text(  # type: ignore[union-attr]
             "سرویس‌های شما:",
-            reply_markup=service_list_kb([c.email for c in clients]),
+            reply_markup=service_list_kb(emails),
         )
     await callback.answer()
 
@@ -498,24 +491,15 @@ def _service_detail_text(email: str, enabled: bool, expiry_ms: int = 0) -> str:
 
 
 async def _load_service_detail(
-    user_id: int, email: str, xui: XuiClient | None = None
+    user_id: int, email: str, registry: PanelRegistry
 ) -> tuple[bool, int]:
-    if xui is None:
-        return True, 0
     enabled = True
     expiry_ms = 0
-    async with get_session_factory()() as session:
-        reseller = await ResellerRepository(session).get(user_id)
-        if not reseller:
-            return enabled, expiry_ms
-        record = await ClientRepository(session).get_by_email(
-            email, panel_id=reseller.panel_id
-        )
-        if record:
-            expiry_ms = int(record.expiry_time or 0)
-        svc = ResellerService(session, xui)
+    async with open_service_context(registry, user_id, email) as (ctx, session):
+        expiry_ms = int(ctx.record.expiry_time or 0)
+        svc = ResellerService(session, ctx.xui)
         try:
-            traffic = await svc.get_traffic(reseller, email)
+            traffic = await svc.get_traffic(ctx.reseller, email)
             data = normalize_traffic_data(traffic)
             enabled = bool(data.get("enable", True))
             raw_exp = data.get("expiryTime", data.get("expiry_time", 0))
@@ -531,9 +515,12 @@ async def _load_service_detail(
 
 
 async def _show_service_detail(
-    message: Message, email: str, user_id: int, xui: XuiClient | None = None
+    message: Message,
+    email: str,
+    user_id: int,
+    registry: PanelRegistry,
 ) -> None:
-    enabled, expiry_ms = await _load_service_detail(user_id, email, xui)
+    enabled, expiry_ms = await _load_service_detail(user_id, email, registry)
     await message.edit_text(
         _service_detail_text(email, enabled, expiry_ms),
         parse_mode="Markdown",
@@ -542,18 +529,22 @@ async def _show_service_detail(
 
 
 @router.callback_query(F.data.startswith("svc:"))
-async def service_detail(callback: CallbackQuery, xui: XuiClient | None = None) -> None:
+async def service_detail(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
     email = (callback.data or "").split(":", 1)[1]
     if email == "back":
         return
     if not callback.from_user or not callback.message:
         await callback.answer()
         return
-    if await _abort_if_no_panel(callback, xui):
+    try:
+        enabled, expiry_ms = await _load_service_detail(
+            callback.from_user.id, email, panel_registry
+        )
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
         return
-    enabled, expiry_ms = await _load_service_detail(
-        callback.from_user.id, email, xui
-    )
     await callback.message.edit_text(  # type: ignore[union-attr]
         _service_detail_text(email, enabled, expiry_ms),
         parse_mode="Markdown",
@@ -563,14 +554,20 @@ async def service_detail(callback: CallbackQuery, xui: XuiClient | None = None) 
 
 
 @router.callback_query(F.data.regexp(r"^exp:[^:]+$"))
-async def expiry_menu(callback: CallbackQuery, xui: XuiClient | None = None) -> None:
+async def expiry_menu(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
     email = (callback.data or "").split(":", 1)[1]
     if not callback.from_user or not callback.message:
         await callback.answer()
         return
-    enabled, expiry_ms = await _load_service_detail(
-        callback.from_user.id, email, xui
-    )
+    try:
+        enabled, expiry_ms = await _load_service_detail(
+            callback.from_user.id, email, panel_registry
+        )
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
     await callback.message.edit_text(  # type: ignore[union-attr]
         t.EXPIRY_CHOOSE_MODE.format(
             email=email,
@@ -606,48 +603,62 @@ async def expiry_start_set_date(
 
 @router.callback_query(F.data.startswith("exp_unlim:"))
 async def expiry_set_unlimited(
-    callback: CallbackQuery, state: FSMContext, xui: XuiClient | None = None
+    callback: CallbackQuery,
+    state: FSMContext,
+    panel_registry: PanelRegistry,
 ) -> None:
     email = (callback.data or "").split(":", 1)[1]
     if not callback.from_user or not callback.message:
         await callback.answer()
         return
     await state.clear()
-    async with get_session_factory()() as session:
-        reseller = await ResellerRepository(session).get(callback.from_user.id)
-        if not reseller:
-            await callback.answer(t.NOT_RESELLER, show_alert=True)
-            return
-        svc = ResellerService(session, xui)
-        try:
-            await svc.update_service_expiry(reseller, email, expiry_ms=0)
-        except XuiError as e:
-            await callback.answer(str(e), show_alert=True)
-            return
+    try:
+        async with open_service_context(
+            panel_registry, callback.from_user.id, email
+        ) as (ctx, session):
+            svc = ResellerService(session, ctx.xui)
+            try:
+                await svc.update_service_expiry(ctx.reseller, email, expiry_ms=0)
+            except XuiError as e:
+                await callback.answer(str(e), show_alert=True)
+                return
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
     await callback.answer(t.EXPIRY_UPDATED.format(expiry_label=format_expiry(0)))
-    await _show_service_detail(
-        callback.message, email, callback.from_user.id, xui  # type: ignore[arg-type]
-    )
+    try:
+        await _show_service_detail(
+            callback.message, email, callback.from_user.id, panel_registry  # type: ignore[arg-type]
+        )
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
 
 
 @router.callback_query(F.data.startswith("exp_cancel:"))
 async def expiry_cancel(
-    callback: CallbackQuery, state: FSMContext, xui: XuiClient | None = None
+    callback: CallbackQuery,
+    state: FSMContext,
+    panel_registry: PanelRegistry,
 ) -> None:
     email = (callback.data or "").split(":", 1)[1]
     await state.clear()
     if not callback.from_user or not callback.message:
         await callback.answer()
         return
-    await _show_service_detail(
-        callback.message, email, callback.from_user.id, xui  # type: ignore[arg-type]
-    )
+    try:
+        await _show_service_detail(
+            callback.message, email, callback.from_user.id, panel_registry  # type: ignore[arg-type]
+        )
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
     await callback.answer()
 
 
 @router.message(ExtendExpiryStates.add_days)
 async def expiry_process_add_days(
-    message: Message, state: FSMContext, xui: XuiClient | None = None
+    message: Message, state: FSMContext, panel_registry: PanelRegistry
 ) -> None:
     if not message.from_user:
         return
@@ -665,19 +676,21 @@ async def expiry_process_add_days(
         await message.answer(t.INVALID_INPUT)
         return
     await state.clear()
-    async with get_session_factory()() as session:
-        reseller = await ResellerRepository(session).get(message.from_user.id)
-        if not reseller:
-            await message.answer(t.NOT_RESELLER)
-            return
-        svc = ResellerService(session, xui)
-        try:
-            new_ms = await svc.update_service_expiry(
-                reseller, email, add_days=days
-            )
-        except XuiError as e:
-            await message.answer(str(e))
-            return
+    try:
+        async with open_service_context(
+            panel_registry, message.from_user.id, email
+        ) as (ctx, session):
+            svc = ResellerService(session, ctx.xui)
+            try:
+                new_ms = await svc.update_service_expiry(
+                    ctx.reseller, email, add_days=days
+                )
+            except XuiError as e:
+                await message.answer(str(e))
+                return
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_message(message, e)
+        return
     await message.answer(
         t.EXPIRY_UPDATED.format(expiry_label=format_expiry(new_ms))
     )
@@ -685,7 +698,7 @@ async def expiry_process_add_days(
 
 @router.message(ExtendExpiryStates.set_date)
 async def expiry_process_set_date(
-    message: Message, state: FSMContext, xui: XuiClient | None = None
+    message: Message, state: FSMContext, panel_registry: PanelRegistry
 ) -> None:
     if not message.from_user:
         return
@@ -701,55 +714,71 @@ async def expiry_process_set_date(
         await message.answer(str(e))
         return
     await state.clear()
-    async with get_session_factory()() as session:
-        reseller = await ResellerRepository(session).get(message.from_user.id)
-        if not reseller:
-            await message.answer(t.NOT_RESELLER)
-            return
-        svc = ResellerService(session, xui)
-        try:
-            new_ms = await svc.update_service_expiry(
-                reseller, email, expiry_ms=expiry_ms
-            )
-        except XuiError as e:
-            await message.answer(str(e))
-            return
+    try:
+        async with open_service_context(
+            panel_registry, message.from_user.id, email
+        ) as (ctx, session):
+            svc = ResellerService(session, ctx.xui)
+            try:
+                new_ms = await svc.update_service_expiry(
+                    ctx.reseller, email, expiry_ms=expiry_ms
+                )
+            except XuiError as e:
+                await message.answer(str(e))
+                return
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_message(message, e)
+        return
     await message.answer(
         t.EXPIRY_UPDATED.format(expiry_label=format_expiry(new_ms))
     )
 
 
 @router.callback_query(F.data.startswith("enable:"))
-async def service_enable(callback: CallbackQuery, xui: XuiClient | None = None) -> None:
-    await _service_set_enabled(callback, enabled=True, xui=xui)
+async def service_enable(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
+    await _service_set_enabled(callback, enabled=True, panel_registry=panel_registry)
 
 
 @router.callback_query(F.data.startswith("disable:"))
-async def service_disable(callback: CallbackQuery, xui: XuiClient | None = None) -> None:
-    await _service_set_enabled(callback, enabled=False, xui=xui)
+async def service_disable(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
+    await _service_set_enabled(
+        callback, enabled=False, panel_registry=panel_registry
+    )
 
 
 async def _service_set_enabled(
-    callback: CallbackQuery, *, enabled: bool, xui: XuiClient | None = None
+    callback: CallbackQuery,
+    *,
+    enabled: bool,
+    panel_registry: PanelRegistry,
 ) -> None:
     email = (callback.data or "").split(":", 1)[1]
     if not callback.from_user:
         return
-    async with get_session_factory()() as session:
-        repo = ResellerRepository(session)
-        reseller = await repo.get(callback.from_user.id)
-        if not reseller:
-            await callback.answer(t.NOT_RESELLER, show_alert=True)
-            return
-        svc = ResellerService(session, xui)
-        try:
-            await svc.set_service_enabled(reseller, email, enabled)
-        except XuiError as e:
-            await callback.answer(str(e), show_alert=True)
-            return
-    enabled, expiry_ms = await _load_service_detail(
-        callback.from_user.id, email, xui
-    )
+    try:
+        async with open_service_context(
+            panel_registry, callback.from_user.id, email
+        ) as (ctx, session):
+            svc = ResellerService(session, ctx.xui)
+            try:
+                await svc.set_service_enabled(ctx.reseller, email, enabled)
+            except XuiError as e:
+                await callback.answer(str(e), show_alert=True)
+                return
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
+    try:
+        enabled, expiry_ms = await _load_service_detail(
+            callback.from_user.id, email, panel_registry
+        )
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
     await callback.message.edit_text(  # type: ignore[union-attr]
         _service_detail_text(email, enabled, expiry_ms),
         parse_mode="Markdown",
@@ -761,22 +790,26 @@ async def _service_set_enabled(
 
 
 @router.callback_query(F.data.startswith("link:"))
-async def service_link(callback: CallbackQuery, xui: XuiClient | None = None) -> None:
+async def service_link(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
     email = (callback.data or "").split(":", 1)[1]
     if not callback.from_user:
         return
-    async with get_session_factory()() as session:
-        repo = ResellerRepository(session)
-        reseller = await repo.get(callback.from_user.id)
-        if not reseller:
-            await callback.answer(t.NOT_RESELLER, show_alert=True)
-            return
-        svc = ResellerService(session, xui)
-        try:
-            delivery = await svc.get_delivery(reseller, email)
-        except XuiError as e:
-            await callback.answer(str(e), show_alert=True)
-            return
+    try:
+        async with open_service_context(
+            panel_registry, callback.from_user.id, email
+        ) as (ctx, session):
+            svc = ResellerService(session, ctx.xui)
+            try:
+                delivery = await svc.get_delivery(ctx.reseller, email)
+            except XuiError as e:
+                await callback.answer(str(e), show_alert=True)
+                return
+            service_xui = ctx.xui
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
     qr_markup = (
         vless_qr_kb(email, delivery.vless_configs) if delivery.vless_configs else None
     )
@@ -785,9 +818,7 @@ async def service_link(callback: CallbackQuery, xui: XuiClient | None = None) ->
             email,
             delivery,
             created=False,
-            sub_public_url_configured=bool(
-                xui and xui.sub_public_url
-            ),
+            sub_public_url_configured=bool(service_xui.sub_public_url),
         ),
         parse_mode=DELIVERY_PARSE_MODE,
         reply_markup=qr_markup,
@@ -801,23 +832,26 @@ def _qr_caption(remark: str) -> str:
 
 
 @router.callback_query(F.data.startswith("qr_menu:"))
-async def show_vless_qr_menu(callback: CallbackQuery, xui: XuiClient | None = None) -> None:
+async def show_vless_qr_menu(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
     email = (callback.data or "").split(":", 1)[1]
     if not callback.from_user or not callback.message:
         await callback.answer()
         return
-    async with get_session_factory()() as session:
-        repo = ResellerRepository(session)
-        reseller = await repo.get(callback.from_user.id)
-        if not reseller:
-            await callback.answer(t.NOT_RESELLER, show_alert=True)
-            return
-        svc = ResellerService(session, xui)
-        try:
-            delivery = await svc.get_delivery(reseller, email)
-        except XuiError as e:
-            await callback.answer(str(e), show_alert=True)
-            return
+    try:
+        async with open_service_context(
+            panel_registry, callback.from_user.id, email
+        ) as (ctx, session):
+            svc = ResellerService(session, ctx.xui)
+            try:
+                delivery = await svc.get_delivery(ctx.reseller, email)
+            except XuiError as e:
+                await callback.answer(str(e), show_alert=True)
+                return
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
     if not delivery.vless_configs:
         await callback.answer(t.QR_NOT_AVAILABLE, show_alert=True)
         return
@@ -829,7 +863,9 @@ async def show_vless_qr_menu(callback: CallbackQuery, xui: XuiClient | None = No
 
 
 @router.callback_query(F.data.regexp(r"^qr:[^:]+:\d+$"))
-async def send_vless_qr(callback: CallbackQuery, xui: XuiClient | None = None) -> None:
+async def send_vless_qr(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
     data = callback.data or ""
     try:
         _, email, idx_s = data.split(":", 2)
@@ -840,18 +876,19 @@ async def send_vless_qr(callback: CallbackQuery, xui: XuiClient | None = None) -
     if not callback.from_user or not callback.message:
         await callback.answer()
         return
-    async with get_session_factory()() as session:
-        repo = ResellerRepository(session)
-        reseller = await repo.get(callback.from_user.id)
-        if not reseller:
-            await callback.answer(t.NOT_RESELLER, show_alert=True)
-            return
-        svc = ResellerService(session, xui)
-        try:
-            delivery = await svc.get_delivery(reseller, email)
-        except XuiError as e:
-            await callback.answer(str(e), show_alert=True)
-            return
+    try:
+        async with open_service_context(
+            panel_registry, callback.from_user.id, email
+        ) as (ctx, session):
+            svc = ResellerService(session, ctx.xui)
+            try:
+                delivery = await svc.get_delivery(ctx.reseller, email)
+            except XuiError as e:
+                await callback.answer(str(e), show_alert=True)
+                return
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
     if index < 0 or index >= len(delivery.vless_configs):
         await callback.answer(t.INVALID_INPUT, show_alert=True)
         return
@@ -869,22 +906,25 @@ async def send_vless_qr(callback: CallbackQuery, xui: XuiClient | None = None) -
 
 
 @router.callback_query(F.data.startswith("traffic:"))
-async def service_traffic(callback: CallbackQuery, xui: XuiClient | None = None) -> None:
+async def service_traffic(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
     email = (callback.data or "").split(":", 1)[1]
     if not callback.from_user:
         return
-    async with get_session_factory()() as session:
-        repo = ResellerRepository(session)
-        reseller = await repo.get(callback.from_user.id)
-        if not reseller:
-            await callback.answer(t.NOT_RESELLER, show_alert=True)
-            return
-        svc = ResellerService(session, xui)
-        try:
-            traffic = await svc.get_traffic(reseller, email)
-        except XuiError as e:
-            await callback.answer(str(e), show_alert=True)
-            return
+    try:
+        async with open_service_context(
+            panel_registry, callback.from_user.id, email
+        ) as (ctx, session):
+            svc = ResellerService(session, ctx.xui)
+            try:
+                traffic = await svc.get_traffic(ctx.reseller, email)
+            except XuiError as e:
+                await callback.answer(str(e), show_alert=True)
+                return
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
     await callback.message.answer(  # type: ignore[union-attr]
         format_traffic_message(email, traffic),
     )
@@ -902,11 +942,11 @@ async def service_delete_prompt(callback: CallbackQuery) -> None:
         if not reseller:
             await callback.answer(t.NOT_RESELLER, show_alert=True)
             return
-        record = await ClientRepository(session).get_by_email(
-            email, panel_id=reseller.panel_id
+        record = await ClientRepository(session).get_for_reseller_email(
+            reseller.telegram_id, email
         )
-        if not record or record.reseller_tg_id != reseller.telegram_id:
-            await callback.answer("سرویس یافت نشد.", show_alert=True)
+        if not record:
+            await callback.answer(t.SERVICE_NOT_FOUND, show_alert=True)
             return
     await callback.message.edit_text(  # type: ignore[union-attr]
         t.DELETE_CONFIRM.format(email=email),
@@ -917,35 +957,44 @@ async def service_delete_prompt(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("del_confirm:"))
-async def service_delete_confirm(callback: CallbackQuery, xui: XuiClient | None = None) -> None:
+async def service_delete_confirm(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
     email = (callback.data or "").split(":", 1)[1]
     if not callback.from_user:
         return
-    async with get_session_factory()() as session:
-        repo = ResellerRepository(session)
-        reseller = await repo.get(callback.from_user.id)
-        if not reseller:
-            await callback.answer(t.NOT_RESELLER, show_alert=True)
-            return
-        svc = ResellerService(session, xui)
-        try:
-            await svc.delete_service(reseller, email)
-        except XuiError as e:
-            await callback.answer(str(e), show_alert=True)
-            return
+    try:
+        async with open_service_context(
+            panel_registry, callback.from_user.id, email
+        ) as (ctx, session):
+            svc = ResellerService(session, ctx.xui)
+            try:
+                await svc.delete_service(ctx.reseller, email)
+            except XuiError as e:
+                await callback.answer(str(e), show_alert=True)
+                return
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
     await callback.message.edit_text(t.SERVICE_DELETED)  # type: ignore[union-attr]
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("del_cancel:"))
-async def service_delete_cancel(callback: CallbackQuery, xui: XuiClient | None = None) -> None:
+async def service_delete_cancel(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
     email = (callback.data or "").split(":", 1)[1]
     if not callback.from_user or not callback.message:
         await callback.answer()
         return
-    await _show_service_detail(
-        callback.message, email, callback.from_user.id, xui  # type: ignore[arg-type]
-    )
+    try:
+        await _show_service_detail(
+            callback.message, email, callback.from_user.id, panel_registry  # type: ignore[arg-type]
+        )
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
     await callback.answer()
 
 
@@ -958,21 +1007,28 @@ def _comment_display(comment: str) -> str:
 
 
 async def _show_service_edit_menu(
-    message: Message, email: str, user_id: int, xui: XuiClient | None = None
+    message: Message, email: str, user_id: int, registry: PanelRegistry
 ) -> None:
     limit_ip = 0
     comment = ""
-    async with get_session_factory()() as session:
-        reseller = await ResellerRepository(session).get(user_id)
-        if not reseller:
-            await message.edit_text(t.NOT_RESELLER)
-            return
-        svc = ResellerService(session, xui)
-        try:
-            limit_ip, comment = await svc.get_client_panel_fields(reseller, email)
-        except XuiError as e:
-            await message.edit_text(str(e))
-            return
+    try:
+        async with open_service_context(registry, user_id, email) as (ctx, session):
+            svc = ResellerService(session, ctx.xui)
+            try:
+                limit_ip, comment = await svc.get_client_panel_fields(
+                    ctx.reseller, email
+                )
+            except XuiError as e:
+                await message.edit_text(str(e))
+                return
+    except ServiceNotFoundError:
+        await message.edit_text(t.SERVICE_NOT_FOUND)
+        return
+    except ServicePanelUnavailableError as e:
+        await message.edit_text(
+            t.SERVICE_PANEL_UNAVAILABLE.format(panel_id=e.panel_id)
+        )
+        return
     await message.edit_text(
         t.EDIT_MENU.format(
             email=email,
@@ -985,26 +1041,34 @@ async def _show_service_edit_menu(
 
 
 @router.callback_query(F.data.regexp(r"^edit:[^:]+$"))
-async def service_edit_menu(callback: CallbackQuery, xui: XuiClient | None = None) -> None:
+async def service_edit_menu(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
     email = (callback.data or "").split(":", 1)[1]
     if not callback.from_user or not callback.message:
         await callback.answer()
         return
     await _show_service_edit_menu(
-        callback.message, email, callback.from_user.id, xui  # type: ignore[arg-type]
+        callback.message, email, callback.from_user.id, panel_registry  # type: ignore[arg-type]
     )
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("edit_back:"))
-async def service_edit_back(callback: CallbackQuery, xui: XuiClient | None = None) -> None:
+async def service_edit_back(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
     email = (callback.data or "").split(":", 1)[1]
     if not callback.from_user or not callback.message:
         await callback.answer()
         return
-    await _show_service_detail(
-        callback.message, email, callback.from_user.id, xui  # type: ignore[arg-type]
-    )
+    try:
+        await _show_service_detail(
+            callback.message, email, callback.from_user.id, panel_registry  # type: ignore[arg-type]
+        )
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
     await callback.answer()
 
 
@@ -1024,37 +1088,41 @@ async def service_edit_reset_prompt(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("edit_reset_ok:"))
 async def service_edit_reset_confirm(
-    callback: CallbackQuery, xui: XuiClient | None = None
+    callback: CallbackQuery, panel_registry: PanelRegistry
 ) -> None:
     email = (callback.data or "").split(":", 1)[1]
     if not callback.from_user or not callback.message:
         await callback.answer()
         return
-    async with get_session_factory()() as session:
-        reseller = await ResellerRepository(session).get(callback.from_user.id)
-        if not reseller:
-            await callback.answer(t.NOT_RESELLER, show_alert=True)
-            return
-        svc = ResellerService(session, xui)
-        try:
-            await svc.reset_service_traffic(reseller, email)
-        except XuiError as e:
-            await callback.answer(str(e), show_alert=True)
-            return
+    try:
+        async with open_service_context(
+            panel_registry, callback.from_user.id, email
+        ) as (ctx, session):
+            svc = ResellerService(session, ctx.xui)
+            try:
+                await svc.reset_service_traffic(ctx.reseller, email)
+            except XuiError as e:
+                await callback.answer(str(e), show_alert=True)
+                return
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
     await callback.answer(t.TRAFFIC_RESET_OK)
     await _show_service_edit_menu(
-        callback.message, email, callback.from_user.id, xui  # type: ignore[arg-type]
+        callback.message, email, callback.from_user.id, panel_registry  # type: ignore[arg-type]
     )
 
 
 @router.callback_query(F.data.startswith("edit_reset_no:"))
-async def service_edit_reset_cancel(callback: CallbackQuery, xui: XuiClient | None = None) -> None:
+async def service_edit_reset_cancel(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
     email = (callback.data or "").split(":", 1)[1]
     if not callback.from_user or not callback.message:
         await callback.answer()
         return
     await _show_service_edit_menu(
-        callback.message, email, callback.from_user.id, xui  # type: ignore[arg-type]
+        callback.message, email, callback.from_user.id, panel_registry  # type: ignore[arg-type]
     )
     await callback.answer()
 
@@ -1083,7 +1151,7 @@ async def service_edit_comment_start(
 
 @router.message(EditServiceStates.limit_ip)
 async def service_edit_limit_input(
-    message: Message, state: FSMContext, xui: XuiClient | None = None
+    message: Message, state: FSMContext, panel_registry: PanelRegistry
 ) -> None:
     if not message.from_user:
         return
@@ -1099,17 +1167,19 @@ async def service_edit_limit_input(
         await message.answer(str(e) if isinstance(e, InvalidEditInputError) else t.INVALID_INPUT)
         return
     await state.clear()
-    async with get_session_factory()() as session:
-        reseller = await ResellerRepository(session).get(message.from_user.id)
-        if not reseller:
-            await message.answer(t.NOT_RESELLER)
-            return
-        svc = ResellerService(session, xui)
-        try:
-            await svc.update_service_limit_ip(reseller, email, limit_ip)
-        except XuiError as e:
-            await message.answer(str(e))
-            return
+    try:
+        async with open_service_context(
+            panel_registry, message.from_user.id, email
+        ) as (ctx, session):
+            svc = ResellerService(session, ctx.xui)
+            try:
+                await svc.update_service_limit_ip(ctx.reseller, email, limit_ip)
+            except XuiError as e:
+                await message.answer(str(e))
+                return
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_message(message, e)
+        return
     await message.answer(
         t.LIMIT_IP_UPDATED.format(limit_ip_label=format_limit_ip_label(limit_ip))
     )
@@ -1117,7 +1187,7 @@ async def service_edit_limit_input(
 
 @router.message(EditServiceStates.comment)
 async def service_edit_comment_input(
-    message: Message, state: FSMContext, xui: XuiClient | None = None
+    message: Message, state: FSMContext, panel_registry: PanelRegistry
 ) -> None:
     if not message.from_user:
         return
@@ -1133,15 +1203,17 @@ async def service_edit_comment_input(
         await message.answer(str(e))
         return
     await state.clear()
-    async with get_session_factory()() as session:
-        reseller = await ResellerRepository(session).get(message.from_user.id)
-        if not reseller:
-            await message.answer(t.NOT_RESELLER)
-            return
-        svc = ResellerService(session, xui)
-        try:
-            await svc.update_service_comment(reseller, email, comment)
-        except XuiError as e:
-            await message.answer(str(e))
-            return
+    try:
+        async with open_service_context(
+            panel_registry, message.from_user.id, email
+        ) as (ctx, session):
+            svc = ResellerService(session, ctx.xui)
+            try:
+                await svc.update_service_comment(ctx.reseller, email, comment)
+            except XuiError as e:
+                await message.answer(str(e))
+                return
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_message(message, e)
+        return
     await message.answer(t.COMMENT_UPDATED)

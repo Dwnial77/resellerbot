@@ -6,6 +6,7 @@ SERVICE_TEMPLATES = "📐 قالب‌های سرویس"
 SET_PANEL_RESELLER = "🔄 تغییر پنل ریسلر"
 PANELS = "🖥 پنل‌ها"
 ADMIN_HELP = "❓ راهنمای ادمین"
+BOT_UPDATE = "⬆️ آپدیت ربات"
 
 # Reply keyboard — reseller
 CREATE_SERVICE = "✨ ساخت سرویس"

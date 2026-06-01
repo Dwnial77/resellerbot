@@ -9,12 +9,10 @@ from db.repository import (
     ClientRepository,
     ResellerRepository,
     UsageAlertRepository,
-    inbound_ids_from_json,
     resolve_attach_inbound_ids,
 )
 from services.usage_alerts import CLIENT_TRAFFIC
 from services.quota import QuotaExceeded, QuotaService
-from agent_debug import agent_log
 from bot.utils.edit_service import (
     InvalidEditInputError,
     validate_comment,
@@ -60,41 +58,12 @@ class ResellerService:
         client_suffix: str,
     ) -> tuple[ClientRecord, ClientDelivery]:
         ids = inbound_ids or resolve_attach_inbound_ids(reseller)
-        # #region agent log
-        agent_log(
-            "F",
-            "reseller_service.py:create_service",
-            "inbound lists",
-            {
-                "allowed": inbound_ids_from_json(reseller.allowed_inbound_ids),
-                "attach_raw": reseller.attach_inbound_ids,
-                "attach_resolved": ids,
-            },
-            run_id="post-fix",
-        )
-        # #endregion
         allocated = await self.quota.validate_create(reseller, volume_gb, ids)
 
         email = build_client_email(reseller, client_suffix)
         if await self.client_repo.email_exists(email, panel_id=reseller.panel_id):
             raise XuiError("این نام سرویس قبلاً استفاده شده.")
-        # #region agent log
-        agent_log(
-            "B",
-            "reseller_service.py:create_service",
-            "panel get_client check",
-            {"inbound_ids": ids},
-        )
-        # #endregion
         existing_panel = await self.xui.get_client(email)
-        # #region agent log
-        agent_log(
-            "B",
-            "reseller_service.py:create_service",
-            "panel get_client result",
-            {"exists_on_panel": existing_panel is not None},
-        )
-        # #endregion
         if existing_panel is not None:
             raise XuiError("این نام سرویس در پنل وجود دارد.")
         expiry_ms = 0
@@ -123,37 +92,10 @@ class ResellerService:
                 group=panel_group,
             )
             record = await self.client_repo.set_sub_id(record, sub_id)
-            # #region agent log
-            agent_log(
-                "D",
-                "reseller_service.py:create_service",
-                "fetching delivery",
-                {},
-            )
-            # #endregion
             delivery = await self.xui.get_client_delivery(
                 email, sub_id, total_bytes=allocated
             )
-            # #region agent log
-            agent_log(
-                "D",
-                "reseller_service.py:create_service",
-                "create_service ok",
-                {
-                    "vless_count": len(delivery.vless_links),
-                    "sub_count": len(delivery.subscription_links),
-                },
-            )
-            # #endregion
         except (XuiError, Exception) as e:
-            # #region agent log
-            agent_log(
-                "E",
-                "reseller_service.py:create_service",
-                "create_service failed",
-                {"error_type": type(e).__name__, "error": str(e)[:300]},
-            )
-            # #endregion
             await self.client_repo.delete(record)
             raise XuiError(str(e) or "خطای ناشناخته پنل") from e
 
@@ -162,11 +104,7 @@ class ResellerService:
     async def delete_service(
         self, reseller: Reseller, email: str
     ) -> None:
-        record = await self.client_repo.get_by_email(
-            email, panel_id=reseller.panel_id
-        )
-        if not record or record.reseller_tg_id != reseller.telegram_id:
-            raise XuiError("سرویس یافت نشد یا متعلق به شما نیست.")
+        record = await self._get_owned_record(reseller, email)
         try:
             await self.xui.delete_client(email)
         except XuiError:
@@ -177,28 +115,20 @@ class ResellerService:
         await self.client_repo.delete(record)
 
     async def get_traffic(self, reseller: Reseller, email: str) -> dict:
-        record = await self.client_repo.get_by_email(
-            email, panel_id=reseller.panel_id
-        )
-        if not record or record.reseller_tg_id != reseller.telegram_id:
-            raise XuiError("سرویس یافت نشد.")
+        await self._get_owned_record(reseller, email)
         return await self.xui.get_traffic(email)
 
     async def set_service_enabled(
         self, reseller: Reseller, email: str, enabled: bool
     ) -> None:
-        record = await self.client_repo.get_by_email(
-            email, panel_id=reseller.panel_id
-        )
-        if not record or record.reseller_tg_id != reseller.telegram_id:
-            raise XuiError("سرویس یافت نشد یا متعلق به شما نیست.")
+        await self._get_owned_record(reseller, email)
         await self.xui.set_client_enabled(email, enabled)
 
     async def _get_owned_record(self, reseller: Reseller, email: str) -> ClientRecord:
-        record = await self.client_repo.get_by_email(
-            email, panel_id=reseller.panel_id
+        record = await self.client_repo.get_for_reseller_email(
+            reseller.telegram_id, email
         )
-        if not record or record.reseller_tg_id != reseller.telegram_id:
+        if not record:
             raise XuiError("سرویس یافت نشد یا متعلق به شما نیست.")
         return record
 
@@ -271,11 +201,7 @@ class ResellerService:
         return validated
 
     async def get_delivery(self, reseller: Reseller, email: str) -> ClientDelivery:
-        record = await self.client_repo.get_by_email(
-            email, panel_id=reseller.panel_id
-        )
-        if not record or record.reseller_tg_id != reseller.telegram_id:
-            raise XuiError("سرویس یافت نشد.")
+        record = await self._get_owned_record(reseller, email)
         return await self.xui.get_client_delivery(
             email, record.sub_id, total_bytes=record.allocated_bytes
         )
