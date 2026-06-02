@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scripts/bootstrap.sh` for one-line VPS install (`curl | sudo bash`)
 - `scripts/install.sh` for one-step Linux VPS install
-- README quick install section and GitHub links (`Dwnial77/resellerbot`)
+- README quick install (curl + git clone) and GitHub links (`Dwnial77/resellerbot`)
 
 ## [1.0.0] - 2026-06-01
 

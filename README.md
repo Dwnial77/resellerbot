@@ -26,16 +26,18 @@
 
 ## 🚀 نصب سریع (لینوکس / VPS)
 
-اسکریپت [`scripts/install.sh`](https://gemini.google.com/app/scripts/install.sh "null") کاربر سیستم، محیط مجازی (`virtualenv`)، سرویس `systemd` و فایل `.env` اولیه را به‌طور خودکار آماده می‌کند.
+مخزن: [github.com/Dwnial77/resellerbot](https://github.com/Dwnial77/resellerbot)
 
-```
+### روش ۱ — یک‌خطی (`curl`)
+
+اسکریپت [`scripts/bootstrap.sh`](scripts/bootstrap.sh) مخزن را clone می‌کند و [`scripts/install.sh`](scripts/install.sh) را اجرا می‌کند (کاربر سیستم، venv، systemd، `.env` اولیه).
+
+```bash
 # وابستگی‌ها (Debian/Ubuntu)
-sudo apt update && sudo apt install -y git python3 python3-venv python3-pip
+sudo apt update && sudo apt install -y git curl python3 python3-venv python3-pip
 
-# کلون و نصب پروژه
-sudo git clone [https://github.com/Dwnial77/resellerbot.git](https://github.com/Dwnial77/resellerbot.git) /opt/resellerbot
-cd /opt/resellerbot
-sudo bash scripts/install.sh
+# نصب یک‌خطی
+curl -fsSL https://raw.githubusercontent.com/Dwnial77/resellerbot/main/scripts/bootstrap.sh | sudo bash
 
 # تنظیم توکن ربات و پنل
 sudo nano /opt/resellerbot/.env
@@ -43,10 +45,36 @@ sudo systemctl restart resellerbot
 sudo journalctl -u resellerbot -f
 ```
 
-### 💡 گزینه‌های اسکریپت نصب:
+برای production ترجیحاً اسکریپت را با **tag** ثابت بگیرید (بعد از انتشار tag روی GitHub):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Dwnial77/resellerbot/v1.0.0/scripts/bootstrap.sh | sudo bash
+```
+
+پارامترها (از طریق `bash -s --`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Dwnial77/resellerbot/main/scripts/bootstrap.sh | sudo bash -s -- --no-start
+```
+
+> **امنیت:** قبل از `curl | bash` محتوای [bootstrap.sh](https://raw.githubusercontent.com/Dwnial77/resellerbot/main/scripts/bootstrap.sh) را بررسی کنید. مخزن **private** بدون SSH/PAT روی VPS با این روش clone نمی‌شود.
+
+### روش ۲ — کلون دستی (`git`)
+
+```bash
+sudo apt update && sudo apt install -y git python3 python3-venv python3-pip
+sudo git clone https://github.com/Dwnial77/resellerbot.git /opt/resellerbot
+cd /opt/resellerbot
+sudo bash scripts/install.sh
+sudo nano /opt/resellerbot/.env
+sudo systemctl restart resellerbot
+sudo journalctl -u resellerbot -f
+```
+
+### گزینه‌های اسکریپت نصب (`install.sh` / `bootstrap.sh`)
 
 - `--dir PATH`: تغییر مسیر نصب (پیش‌فرض: `/opt/resellerbot`).
-    
+- `--branch NAME`: شاخهٔ git هنگام bootstrap (پیش‌فرض: `main`).
 - `--no-start`: آماده‌سازی بدون استارت خودکار سرویس.
     
 
@@ -66,8 +94,8 @@ resellerbot ALL=(root) NOPASSWD: /bin/systemctl restart resellerbot
 
 ## 💻 نصب دستی (ویندوز / محیط توسعه)
 
-```
-git clone [https://github.com/Dwnial77/resellerbot.git](https://github.com/Dwnial77/resellerbot.git)
+```bash
+git clone https://github.com/Dwnial77/resellerbot.git
 cd resellerbot
 python -m venv .venv
 
@@ -106,11 +134,11 @@ python -m bot.main
 |`SYSTEMD_SERVICE_NAME`|نام سرویس systemd (پیش‌فرض: `resellerbot`)|
 |`ALLOW_UPDATE_DOWNGRADE`|اجازه نصب نسخه‌های قدیمی‌تر از طریق فایل ZIP|
 
-_جزئیات بیشتر و مقادیر پیش‌فرض در فایل_ [_`.env.example`_](https://gemini.google.com/app/.env.example "null") _موجود است._
+_جزئیات بیشتر و مقادیر پیش‌فرض در فایل [`.env.example`](.env.example) موجود است._
 
 ## 🐧 استقرار دستی لینوکس (بدون install.sh)
 
-اگر ترجیح می‌دهید مراحل را مرحله‌به‌مرحله انجام دهید، کارهای داخل اسکریپت را دستی پیش ببرید: ساخت کاربر `resellerbot`، ساخت venv، تنظیم کدهای [`deploy/resellerbot.service`](https://gemini.google.com/app/deploy/resellerbot.service "null") و اجرای دستور `systemctl enable --now resellerbot`.
+اگر ترجیح می‌دهید مراحل را مرحله‌به‌مرحله انجام دهید، کارهای داخل [`scripts/install.sh`](scripts/install.sh) را دستی پیش ببرید: ساخت کاربر `resellerbot`، ساخت venv، تنظیم [`deploy/resellerbot.service`](deploy/resellerbot.service) و اجرای `systemctl enable --now resellerbot`.
 
 دستور ری‌استارت سرویس:
 
@@ -120,7 +148,7 @@ sudo systemctl restart resellerbot
 
 ## ⬆️ آپدیت ربات (ZIP از GitHub)
 
-1. از بخش [Releases](https://github.com/Dwnial77/resellerbot/releases "null") فایل `resellerbot-X.Y.Z.zip` را دانلود کنید.
+1. از بخش [Releases](https://github.com/Dwnial77/resellerbot/releases) فایل `resellerbot-X.Y.Z.zip` را دانلود کنید.
     
 2. در تلگرام دکمه **⬆️ آپدیت ربات** یا دستور `/bot_update` را بزنید و فایل ZIP را بفرستید.
     
@@ -218,7 +246,7 @@ XUI_AUTO_RESELLER_GROUP=false
 ربات لینک سابسکریپشن را از ترکیب **`subId` کلاینت** و متغیر **`XUI_SUB_PUBLIC_URL`** تولید می‌کند:
 
 ```
-XUI_SUB_PUBLIC_URL=[https://sub.example.com:2096/save/](https://sub.example.com:2096/save/)
+XUI_SUB_PUBLIC_URL=https://sub.example.com:2096/save/
 ```
 
 خروجی نهایی برای `subId=abc123`: `https://sub.example.com:2096/save/abc123`
@@ -244,7 +272,7 @@ db/           — فایل SQLite و سیستم Migration
 services/     — ماژول‌های مدیریت سهمیه (quota)، آپدیتور و رجیستری پنل‌ها
 xui/          — کلاینت متصل به API پنل 3x-ui
 deploy/       — فایل پیکربندی سرویس لینوکسی systemd
-scripts/      — اسکریپت‌های نصب و بیلد ریلیز ZIP
+scripts/      — bootstrap.sh (curl نصب)، install.sh، build_release_zip.sh
 tests/        — تست‌های پروژه
 ```
 
@@ -259,4 +287,4 @@ tests/        — تست‌های پروژه
 
 ## 📄 مجوز
 
-این پروژه تحت مجوز [MIT](https://gemini.google.com/app/LICENSE "null") منتشر شده است.
+این پروژه تحت مجوز [MIT](LICENSE) منتشر شده است.
