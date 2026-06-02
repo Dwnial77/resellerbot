@@ -59,33 +59,19 @@ from bot.utils.service_resolve import (
     list_accessible_clients,
     open_service_context,
 )
-from bot.agent_debug import agent_log
-from services.panel_resolve import ServiceNotFoundError, ServicePanelUnavailableError
+from bot.utils.panel_access import (
+    answer_panel_unavailable,
+    ensure_reseller_panel_access,
+)
+from services.panel_resolve import (
+    ResellerPanelUnavailableError,
+    ServiceNotFoundError,
+    ServicePanelUnavailableError,
+    xui_for_reseller,
+)
 from xui.client import XuiClient, XuiError
 
 router = Router()
-
-
-async def _abort_if_no_panel(
-    target: Message | CallbackQuery, xui: XuiClient | None
-) -> bool:
-    """Return True if handler should stop (panel client missing)."""
-    if xui is not None:
-        return False
-    uid = target.from_user.id if target.from_user else None
-    # #region agent log
-    agent_log(
-        location="reseller.py:_abort_if_no_panel",
-        message="NO_PANEL_ACCESS triggered",
-        hypothesis_id="H2",
-        data={"user_id": uid, "xui_is_none": True},
-    )
-    # #endregion
-    if isinstance(target, CallbackQuery):
-        await target.answer(t.NO_PANEL_ACCESS, show_alert=True)
-    else:
-        await target.answer(t.NO_PANEL_ACCESS)
-    return True
 
 
 async def _get_active_reseller(user_id: int):
@@ -140,12 +126,16 @@ async def _prompt_client_name(
 
 
 @router.message(F.text == btn.CREATE_SERVICE)
-async def start_create(message: Message, state: FSMContext) -> None:
+async def start_create(
+    message: Message, state: FSMContext, panel_registry: PanelRegistry
+) -> None:
     if not message.from_user:
         return
     reseller, _ = await _get_active_reseller(message.from_user.id)
     if not reseller:
         await message.answer(t.NOT_RESELLER)
+        return
+    if not await ensure_reseller_panel_access(message, panel_registry, reseller):
         return
     await state.clear()
     async with get_session_factory()() as session:
@@ -163,12 +153,16 @@ async def start_create(message: Message, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data == "create:manual")
-async def create_manual(callback: CallbackQuery, state: FSMContext) -> None:
+async def create_manual(
+    callback: CallbackQuery, state: FSMContext, panel_registry: PanelRegistry
+) -> None:
     if not callback.from_user:
         return
     reseller, _ = await _get_active_reseller(callback.from_user.id)
     if not reseller:
         await callback.answer(t.NOT_RESELLER, show_alert=True)
+        return
+    if not await ensure_reseller_panel_access(callback, panel_registry, reseller):
         return
     await state.clear()
     await state.set_state(CreateServiceStates.volume)
@@ -181,13 +175,15 @@ async def create_manual(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("tpl:"))
 async def create_from_template(
-    callback: CallbackQuery, state: FSMContext
+    callback: CallbackQuery, state: FSMContext, panel_registry: PanelRegistry
 ) -> None:
     if not callback.from_user:
         return
     reseller, _ = await _get_active_reseller(callback.from_user.id)
     if not reseller:
         await callback.answer(t.NOT_RESELLER, show_alert=True)
+        return
+    if not await ensure_reseller_panel_access(callback, panel_registry, reseller):
         return
     try:
         template_id = int((callback.data or "").split(":", 1)[1])
@@ -356,6 +352,7 @@ async def confirm_create(
     callback: CallbackQuery,
     state: FSMContext,
     rate_limit_check,
+    panel_registry: PanelRegistry,
     xui: XuiClient | None = None,
 ) -> None:
     if not callback.from_user:
@@ -363,21 +360,6 @@ async def confirm_create(
     if not rate_limit_check(callback.from_user.id, get_settings().create_rate_limit):
         await callback.answer(t.RATE_LIMITED, show_alert=True)
         return
-    if await _abort_if_no_panel(callback, xui):
-        return
-
-    # #region agent log
-    agent_log(
-        location="reseller.py:confirm_create",
-        message="confirm_create passed panel check",
-        hypothesis_id="H5",
-        data={
-            "user_id": callback.from_user.id,
-            "has_xui": xui is not None,
-            "panel_id_in_data": callback.data,
-        },
-    )
-    # #endregion
 
     data = await state.get_data()
     if data.get("create_locked"):
@@ -406,7 +388,18 @@ async def confirm_create(
             await callback.answer()
             return
 
-        svc = ResellerService(session, xui)
+        xui_client = xui
+        if xui_client is None:
+            try:
+                xui_client = await xui_for_reseller(
+                    panel_registry, session, reseller
+                )
+            except ResellerPanelUnavailableError as e:
+                await state.update_data(create_locked=False)
+                await answer_panel_unavailable(callback, e)
+                return
+
+        svc = ResellerService(session, xui_client)
         try:
             record, delivery = await svc.create_service(
                 reseller,

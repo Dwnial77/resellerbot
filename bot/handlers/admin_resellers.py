@@ -523,7 +523,9 @@ async def wizard_inbounds_done(
 
 
 @router.callback_query(AddResellerStates.confirm, F.data == "rsl:wiz_save")
-async def wizard_save(callback: CallbackQuery, state: FSMContext) -> None:
+async def wizard_save(
+    callback: CallbackQuery, state: FSMContext, panel_registry: PanelRegistry
+) -> None:
     if not _is_admin(callback.from_user.id if callback.from_user else None):
         return
     data = await state.get_data()
@@ -542,6 +544,14 @@ async def wizard_save(callback: CallbackQuery, state: FSMContext) -> None:
         if not panel:
             await callback.answer(t.PANEL_NOT_FOUND, show_alert=True)
             return
+        if not panel.is_active:
+            await callback.answer(
+                t.PANEL_INACTIVE_FOR_RESELLER.format(
+                    panel_name=panel.name, panel_id=panel_id
+                ),
+                show_alert=True,
+            )
+            return
         row = await ResellerRepository(session).upsert(
             tg_id,
             gb_to_bytes(quota_gb),
@@ -550,6 +560,7 @@ async def wizard_save(callback: CallbackQuery, state: FSMContext) -> None:
             attach_inbound_ids=inbound_ids,
             display_name=display_name,
         )
+        await panel_registry.reload_panel(session, panel_id)
 
     await state.clear()
     ids_s = ", ".join(str(i) for i in inbound_ids)

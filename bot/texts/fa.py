@@ -36,6 +36,17 @@ RESELLER_ADDED = (
 NO_PANEL_ACCESS = (
     "پنل اختصاصی شما در دسترس نیست. با ادمین تماس بگیرید."
 )
+RESELLER_PANEL_INACTIVE = (
+    "پنل {panel_name} (#{panel_id}) غیرفعال است. با ادمین تماس بگیرید."
+)
+RESELLER_PANEL_MISSING = "پنل #{panel_id} ثبت نشده است. با ادمین تماس بگیرید."
+RESELLER_PANEL_NOT_LOADED = (
+    "اتصال به پنل {panel_name} (#{panel_id}) برقرار نیست. "
+    "با ادمین تماس بگیرید یا چند لحظه بعد دوباره تلاش کنید."
+)
+PANEL_INACTIVE_FOR_RESELLER = (
+    "پنل {panel_name} (#{panel_id}) غیرفعال است. ابتدا پنل را فعال کنید."
+)
 SERVICE_NOT_FOUND = "سرویس یافت نشد."
 SERVICE_PANEL_UNAVAILABLE = (
     "پنل سرویس (#{panel_id}) در دسترس نیست (غیرفعال یا قطع). با ادمین تماس بگیرید."

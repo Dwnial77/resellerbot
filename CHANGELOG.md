@@ -9,7 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `xui_for_reseller` with registry reload from DB when panel missing from cache
+- Clear reseller panel error messages (inactive / missing / not loaded)
 - `scripts/bootstrap.sh` for one-line VPS install (`curl | sudo bash`)
+
+### Fixed
+
+- New resellers on panel #2+ could not create clients (`NO_PANEL_ACCESS`) until full bot restart
 - `scripts/install.sh` for one-step Linux VPS install
 - README quick install (curl + git clone) and GitHub links (`Dwnial77/resellerbot`)
 

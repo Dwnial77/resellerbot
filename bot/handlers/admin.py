@@ -110,7 +110,9 @@ async def admin_help(message: Message) -> None:
 
 
 @router.message(F.text.regexp(_ADD_RESELLER_PATTERN))
-async def add_reseller_inline(message: Message) -> None:
+async def add_reseller_inline(
+    message: Message, panel_registry: PanelRegistry
+) -> None:
     """Format: telegram_id quota_gb inbound... OR telegram_id name quota_gb inbound..."""
     if not _is_admin(message.from_user.id if message.from_user else None):
         return
@@ -125,6 +127,13 @@ async def add_reseller_inline(message: Message) -> None:
         if not panel:
             await message.answer(t.PANEL_NOT_FOUND)
             return
+        if not panel.is_active:
+            await message.answer(
+                t.PANEL_INACTIVE_FOR_RESELLER.format(
+                    panel_name=panel.name, panel_id=parsed.panel_id
+                )
+            )
+            return
         repo = ResellerRepository(session)
         row = await repo.upsert(
             parsed.telegram_id,
@@ -134,6 +143,7 @@ async def add_reseller_inline(message: Message) -> None:
             attach_inbound_ids=parsed.inbound_ids,
             display_name=parsed.display_name,
         )
+        await panel_registry.reload_panel(session, parsed.panel_id)
 
     ids_s = ", ".join(str(i) for i in parsed.inbound_ids)
     await message.answer(
