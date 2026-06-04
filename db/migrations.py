@@ -182,6 +182,29 @@ def migrate_005_client_records_panel_unique(sync_conn: Any) -> None:
     sync_conn.execute(text("ALTER TABLE client_records_new RENAME TO client_records"))
 
 
+def migrate_006_resellers_lifetime_allocated(sync_conn: Any) -> None:
+    cursor = sync_conn.execute(text("PRAGMA table_info(resellers)"))
+    columns = [row[1] for row in cursor.fetchall()]
+    if "lifetime_allocated_bytes" not in columns:
+        sync_conn.execute(
+            text(
+                "ALTER TABLE resellers ADD COLUMN lifetime_allocated_bytes "
+                "BIGINT NOT NULL DEFAULT 0"
+            )
+        )
+    sync_conn.execute(
+        text(
+            """
+            UPDATE resellers SET lifetime_allocated_bytes = (
+                SELECT COALESCE(SUM(allocated_bytes), 0)
+                FROM client_records
+                WHERE client_records.reseller_tg_id = resellers.telegram_id
+            )
+            """
+        )
+    )
+
+
 MIGRATIONS.extend(
     [
         (1, migrate_001_client_records_sub_id),
@@ -189,6 +212,7 @@ MIGRATIONS.extend(
         (3, migrate_003_resellers_attach_inbound_ids),
         (4, migrate_004_resellers_panel_id),
         (5, migrate_005_client_records_panel_unique),
+        (6, migrate_006_resellers_lifetime_allocated),
     ]
 )
 

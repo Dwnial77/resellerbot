@@ -2,7 +2,8 @@ WELCOME_RESELLER = (
     "سلام{display_name}!\n\n"
     "پنل: {panel_name} (#{panel_id})\n"
     "سقف حجم: {quota_gb} GB\n"
-    "مصرف‌شده (تخصیص): {used_gb} GB\n"
+    "تخصیص فعال: {active_gb} GB\n"
+    "مصرف سهمیه: {lifetime_gb} GB\n"
     "باقی‌مانده: {remaining_gb} GB\n"
     "تعداد سرویس: {client_count}\n"
     "سقف تعداد سرویس: {max_clients_line}\n"
@@ -117,6 +118,15 @@ ATTACH_INBOUNDS_UPDATED = (
     "اینباندهای متصل ریسلر {label} به {attach_inbounds} تنظیم شد."
 )
 QUOTA_UPDATED = "سقف ریسلر {label} به {quota_gb} GB تغییر کرد."
+QUOTA_ADDED = (
+    "به سقف ریسلر {label}، {add_gb} GB افزوده شد.\n"
+    "سقف جدید: {quota_gb} GB"
+)
+QUOTA_USAGE_RESET = (
+    "مصرف سهمیه ریسلر {label} ریست شد.\n"
+    "مصرف فعلی: {lifetime_gb} GB (برابر تخصیص فعال)\n"
+    "باقی‌مانده: {remaining_gb} GB"
+)
 MAX_CLIENTS_UPDATED = (
     "سقف تعداد سرویس ریسلر {label} به {max_clients} تنظیم شد.{warning}"
 )
@@ -127,6 +137,21 @@ RESELLER_ENABLED = "ریسلر {label} فعال شد."
 
 RESELLER_LIST_HEADER = "ریسلرها:"
 RESELLER_LIST_EMPTY = "ریسلری ثبت نشده است."
+REPORT_HUB_HEADER = "گزارش‌گیری — ریسلر را انتخاب کنید:"
+REPORT_HUB_EMPTY = "ریسلری برای گزارش وجود ندارد."
+REPORT_HUB_HINT = "روی هر ریسلر بزنید تا گزارش تعداد سرویس و تخصیص حجم نمایش داده شود."
+RESELLER_REPORT = (
+    "📈 گزارش ریسلر: {label}\n"
+    "پنل: {panel_name} (#{panel_id})\n"
+    "وضعیت: {status}\n\n"
+    "تعداد سرویس: {client_count} (حداکثر: {max_clients_line})\n"
+    "سقف حجم: {quota_gb} GB\n"
+    "تخصیص فعال: {active_gb} GB\n"
+    "مصرف سهمیه: {lifetime_gb} GB ({used_percent})\n"
+    "{progress_bar}\n"
+    "باقی‌مانده: {remaining_gb} GB"
+)
+REPORT_UPDATED = "گزارش بروزرسانی شد."
 RESELLER_HUB_HINT = (
     "روی هر ریسلر بزنید برای مدیریت؛ «افزودن ریسلر» برای ویزارد ثبت."
 )
@@ -134,7 +159,9 @@ RESELLER_VIEW_DETAIL = (
     "ریسلر: {label}\n"
     "وضعیت: {status}\n"
     "پنل: {panel_name} (#{panel_id})\n"
-    "سقف: {quota_gb} GB | استفاده: {used_gb} GB | باقی: {remaining_gb} GB\n"
+    "سقف: {quota_gb} GB\n"
+    "تخصیص فعال: {active_gb} GB | مصرف سهمیه: {lifetime_gb} GB\n"
+    "باقی: {remaining_gb} GB\n"
     "سرویس: {client_count} | حداکثر سرویس: {max_clients_line}\n"
     "مجاز: {allowed_inbounds}\n"
     "متصل هنگام ساخت: {attach_inbounds}"
@@ -142,6 +169,15 @@ RESELLER_VIEW_DETAIL = (
 RESELLER_EDIT_MENU = "ویرایش ریسلر {label} — گزینه را انتخاب کنید:"
 RESELLER_EDIT_QUOTA_PROMPT = (
     "سقف حجم (GB) برای {label}:\nیکی از دکمه‌ها را بزنید یا عدد بنویسید:"
+)
+RESELLER_EDIT_ADD_QUOTA_PROMPT = (
+    "افزودن به سقف (GB) برای {label}:\n"
+    "یکی از دکمه‌ها را بزنید یا مقدار افزایش را بنویسید:"
+)
+RESELLER_RESET_QUOTA_CONFIRM = (
+    "ریست مصرف سهمیه برای {label}؟\n\n"
+    "مصرف سهمیه برابر تخصیص فعال سرویس‌ها می‌شود.\n"
+    "برای پکیج تازه، ابتدا سقف را تنظیم کنید سپس این گزینه را بزنید."
 )
 RESELLER_EDIT_NAME_PROMPT = (
     "نام نمایشی جدید برای {label} (a-z 0-9 _ -):"
@@ -254,7 +290,22 @@ EMAIL_TAKEN = "این نام سرویس قبلاً استفاده شده. نام
 # SERVICE_CREATED is built via format_delivery_message in bot/utils/format_delivery.py
 DELETE_CONFIRM = (
     "آیا از حذف سرویس `{email}` مطمئن هستید؟\n"
-    "این کار قابل بازگشت نیست."
+    "این کار قابل بازگشت نیست.\n\n"
+    "{refund_hint}\n\n"
+    "قانون: اگر مصرف واقعی ترافیک کمتر از {threshold_gb} GB باشد، "
+    "سهمیهٔ همان سرویس به حساب شما برمی‌گردد."
+)
+DELETE_CONFIRM_REFUND_YES = (
+    "مصرف فعلی: {used}\n"
+    "با حذف، سهمیهٔ این سرویس به حساب شما برمی‌گردد."
+)
+DELETE_CONFIRM_REFUND_NO = (
+    "مصرف فعلی: {used}\n"
+    "مصرف از {threshold_gb} GB یا بیشتر است؛ سهمیه برنمی‌گردد."
+)
+DELETE_CONFIRM_REFUND_UNKNOWN = (
+    "مصرف ترافیک از پنل خوانده نشد.\n"
+    "در صورت حذف، سهمیه فقط در صورت مصرف زیر آستانه برمی‌گردد."
 )
 CREATE_SESSION_EXPIRED = (
     "اطلاعات ساخت ناقص یا منقضی شده است. از «ساخت سرویس» دوباره شروع کنید."
@@ -267,7 +318,7 @@ QR_CAPTION = "{remark_line}اسکن در کلاینت VPN"
 USAGE_ALERT_RESELLER = (
     "اعلان\n\n"
     "{threshold}٪ سقف حجم ریسلر شما مصرف شده.\n"
-    "تخصیص: {used_gb} از {quota_gb} GB ({percent}٪)"
+    "مصرف سهمیه: {used_gb} از {quota_gb} GB ({percent}٪)"
 )
 USAGE_ALERT_CLIENT = (
     "اعلان\n\n"
@@ -276,6 +327,10 @@ USAGE_ALERT_CLIENT = (
     "مصرف: {used} از {total} ({percent}٪)"
 )
 SERVICE_DELETED = "سرویس حذف شد."
+SERVICE_DELETED_QUOTA_REFUNDED = (
+    "سرویس حذف شد.\n"
+    "{refund_gb} GB سهمیه به حساب شما برگشت."
+)
 SERVICE_ENABLED = "سرویس فعال شد."
 SERVICE_DISABLED = "سرویس غیرفعال شد."
 EXPIRY_CHOOSE_MODE = (

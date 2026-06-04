@@ -50,6 +50,9 @@ class Reseller(Base):
     )
     display_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     quota_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    lifetime_allocated_bytes: Mapped[int] = mapped_column(
+        BigInteger, default=0, nullable=False
+    )
     allowed_inbound_ids: Mapped[str] = mapped_column(String(255), nullable=False)
     attach_inbound_ids: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

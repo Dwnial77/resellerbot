@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bot.config import get_settings
+from bot.utils.format_traffic import client_traffic_used_bytes
 from db.models import ClientRecord, Reseller
 from db.repository import (
     ClientRepository,
@@ -28,6 +31,22 @@ from xui.client import (
     read_limit_ip,
     resolve_expiry_after_add_days,
 )
+
+
+@dataclass
+class DeleteServiceResult:
+    refunded_bytes: int
+
+
+def is_quota_refund_eligible(
+    used_bytes: int, *, max_traffic_gb: float | None = None
+) -> bool:
+    threshold_gb = (
+        max_traffic_gb
+        if max_traffic_gb is not None
+        else get_settings().quota_refund_max_traffic_gb
+    )
+    return used_bytes < gb_to_bytes(threshold_gb)
 
 
 class ResellerService:
@@ -99,12 +118,22 @@ class ResellerService:
             await self.client_repo.delete(record)
             raise XuiError(str(e) or "خطای ناشناخته پنل") from e
 
+        await self.reseller_repo.add_lifetime_allocated(
+            reseller.telegram_id, allocated
+        )
         return record, delivery
 
     async def delete_service(
         self, reseller: Reseller, email: str
-    ) -> None:
+    ) -> DeleteServiceResult:
         record = await self._get_owned_record(reseller, email)
+        refund = 0
+        try:
+            traffic = await self.xui.get_traffic(email)
+            if is_quota_refund_eligible(client_traffic_used_bytes(traffic)):
+                refund = record.allocated_bytes
+        except XuiError:
+            pass
         try:
             await self.xui.delete_client(email)
         except XuiError:
@@ -113,6 +142,11 @@ class ResellerService:
             reseller.telegram_id, CLIENT_TRAFFIC, client_email=email
         )
         await self.client_repo.delete(record)
+        if refund > 0:
+            await self.reseller_repo.subtract_lifetime_allocated(
+                reseller.telegram_id, refund
+            )
+        return DeleteServiceResult(refunded_bytes=refund)
 
     async def get_traffic(self, reseller: Reseller, email: str) -> dict:
         await self._get_owned_record(reseller, email)

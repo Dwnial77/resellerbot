@@ -10,7 +10,8 @@ def _status(
 ) -> QuotaStatus:
     return QuotaStatus(
         quota_bytes=100 * 1024**3,
-        used_bytes=0,
+        active_bytes=0,
+        lifetime_bytes=0,
         remaining_bytes=100 * 1024**3,
         client_count=client_count,
         max_clients=max_clients,

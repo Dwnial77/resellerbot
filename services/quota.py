@@ -9,18 +9,31 @@ from xui.client import bytes_to_gb, gb_to_bytes
 @dataclass
 class QuotaStatus:
     quota_bytes: int
-    used_bytes: int
+    active_bytes: int
+    lifetime_bytes: int
     remaining_bytes: int
     client_count: int
     max_clients: int | None
+
+    @property
+    def used_bytes(self) -> int:
+        return self.lifetime_bytes
 
     @property
     def quota_gb(self) -> float:
         return bytes_to_gb(self.quota_bytes)
 
     @property
+    def active_gb(self) -> float:
+        return bytes_to_gb(self.active_bytes)
+
+    @property
+    def lifetime_gb(self) -> float:
+        return bytes_to_gb(self.lifetime_bytes)
+
+    @property
     def used_gb(self) -> float:
-        return bytes_to_gb(self.used_bytes)
+        return self.lifetime_gb
 
     @property
     def remaining_gb(self) -> float:
@@ -51,12 +64,14 @@ class QuotaService:
         self.repo = repo
 
     async def status(self, reseller: Reseller) -> QuotaStatus:
-        used = await self.repo.used_bytes(reseller.telegram_id)
+        active = await self.repo.active_bytes(reseller.telegram_id)
+        lifetime = int(reseller.lifetime_allocated_bytes or 0)
         count = await self.repo.client_count(reseller.telegram_id)
-        remaining = max(0, reseller.quota_bytes - used)
+        remaining = max(0, reseller.quota_bytes - lifetime)
         return QuotaStatus(
             quota_bytes=reseller.quota_bytes,
-            used_bytes=used,
+            active_bytes=active,
+            lifetime_bytes=lifetime,
             remaining_bytes=remaining,
             client_count=count,
             max_clients=reseller.max_clients,

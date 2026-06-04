@@ -1,6 +1,7 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 from bot.keyboards import labels as L
+from bot.utils.report_format import format_report_button_label, usage_percent_int
 from db.models import Panel, Reseller, ServiceTemplate
 from xui.client import VlessConfig
 
@@ -25,14 +26,17 @@ def admin_main_kb() -> ReplyKeyboardMarkup:
         keyboard=[
             [
                 KeyboardButton(text=L.LIST_RESELLERS),
-                KeyboardButton(text=L.SERVICE_TEMPLATES),
+                KeyboardButton(text=L.REPORTS),
             ],
             [
-                KeyboardButton(text=L.SET_PANEL_RESELLER),
+                KeyboardButton(text=L.SERVICE_TEMPLATES),
                 KeyboardButton(text=L.PANELS),
             ],
             [
+                KeyboardButton(text=L.SET_PANEL_RESELLER),
                 KeyboardButton(text=L.BOT_UPDATE),
+            ],
+            [
                 KeyboardButton(text=L.ADMIN_HELP),
             ],
         ],
@@ -212,6 +216,55 @@ def reseller_admin_hub_kb(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def reseller_report_hub_kb(
+    resellers: list[Reseller],
+    panel_names: dict[int, str],
+    stats: dict[int, object],
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for r in resellers[:20]:
+        name = r.display_name or str(r.telegram_id)
+        st = stats.get(r.telegram_id)
+        client_count = st.client_count if st is not None else 0
+        percent = (
+            usage_percent_int(st.used_bytes, st.quota_bytes)
+            if st is not None
+            else None
+        )
+        label = format_report_button_label(
+            name,
+            is_active=r.is_active,
+            client_count=client_count,
+            percent=percent,
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=f"rpt:view:{r.telegram_id}",
+                )
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def reseller_report_view_kb(telegram_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.REFRESH,
+                    callback_data=f"rpt:refresh:{telegram_id}",
+                ),
+                InlineKeyboardButton(
+                    text=L.BACK,
+                    callback_data="rpt:back",
+                ),
+            ],
+        ]
+    )
+
+
 def reseller_view_kb(
     telegram_id: int, *, is_active: bool, can_change_panel: bool
 ) -> InlineKeyboardMarkup:
@@ -375,6 +428,18 @@ def reseller_edit_menu_kb(telegram_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text=L.EDIT_ADD_QUOTA,
+                    callback_data=f"rsl:ev:addq:{tid}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.RESET_QUOTA_USAGE,
+                    callback_data=f"rsl:ev:resetu:{tid}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
                     text=L.EDIT_MAX_CLIENTS,
                     callback_data=f"rsl:ev:maxc:{tid}",
                 ),
@@ -421,6 +486,49 @@ def reseller_edit_quota_kb(telegram_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text=L.CANCEL,
                     callback_data=f"rsl:edit_cancel:{telegram_id}",
+                ),
+            ],
+        ]
+    )
+
+
+def reseller_edit_add_quota_kb(telegram_id: int) -> InlineKeyboardMarkup:
+    volumes = (5, 10, 20, 50, 100, 500)
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for v in volumes:
+        row.append(
+            InlineKeyboardButton(
+                text=f"+{v} GB", callback_data=f"rsl:eaq:{v}:{telegram_id}"
+            )
+        )
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=L.CANCEL,
+                callback_data=f"rsl:edit_cancel:{telegram_id}",
+            ),
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def reseller_reset_quota_confirm_kb(telegram_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.YES_RESET,
+                    callback_data=f"rsl:resetu:yes:{telegram_id}",
+                ),
+                InlineKeyboardButton(
+                    text=L.NO,
+                    callback_data=f"rsl:resetu:no:{telegram_id}",
                 ),
             ],
         ]

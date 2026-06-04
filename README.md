@@ -1,6 +1,6 @@
 # 🤖 Reseller Bot for 3x-ui (v3.2.0)
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](CHANGELOG.md)[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)[![Repository](https://img.shields.io/badge/github-resellerbot-darkviolet.svg)](https://github.com/Dwnial77/resellerbot)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](CHANGELOG.md)[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)[![Repository](https://img.shields.io/badge/github-resellerbot-darkviolet.svg)](https://github.com/Dwnial77/resellerbot)
 
 پروژه **Reseller Bot** یک ربات تلگرام پیشرفته است که لایهٔ **ریسلر (نمایندگی فروش)** را روی پنل [3x-ui (MHSanaei)](https://github.com/MHSanaei/3x-ui "null") اضافه می‌کند. به‌جای دادن دسترسی مستقیم پنل به هر فروشنده، ادمین ریسلرها را با سقف حجم، اینباند مجاز و (در صورت نیاز) چند پنل جدا تعریف می‌کند؛ ریسلر فقط از تلگرام سرویس می‌سازد و مدیریت می‌کند.
 
@@ -161,7 +161,7 @@ sudo systemctl restart resellerbot
 
 ```
 bash scripts/build_release_zip.sh
-# خروجی در مسیر: dist/resellerbot-1.0.0.zip
+# خروجی در مسیر: dist/resellerbot-1.1.0.zip
 ```
 
 > ⚠️ **توجه:** روی سرور پروداکشن (Production) فقط از روش ZIP یا فقط از روش `git pull` استفاده کنید؛ ترکیب همزمان هر دو روش توصیه نمی‌شود.

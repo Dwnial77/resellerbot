@@ -31,6 +31,8 @@ from bot.utils.expiry import InvalidExpiryInputError, parse_expiry_date
 from bot.utils.format_delivery import DELIVERY_PARSE_MODE, format_delivery_message
 from bot.utils.qr_vless import InvalidVlessQrError, generate_vless_qr_png
 from bot.utils.format_traffic import (
+    client_traffic_used_bytes,
+    format_bytes,
     format_expiry,
     format_traffic_message,
     normalize_traffic_data,
@@ -52,7 +54,11 @@ from services.reseller_labels import (
     normalize_client_suffix,
 )
 from services.panel_registry import PanelRegistry
-from services.reseller_service import ResellerService
+from services.reseller_service import (
+    DeleteServiceResult,
+    ResellerService,
+    is_quota_refund_eligible,
+)
 from bot.utils.service_resolve import (
     answer_resolve_callback,
     answer_resolve_message,
@@ -69,7 +75,7 @@ from services.panel_resolve import (
     ServicePanelUnavailableError,
     xui_for_reseller,
 )
-from xui.client import XuiClient, XuiError
+from xui.client import XuiClient, XuiError, bytes_to_gb
 
 router = Router()
 
@@ -106,7 +112,8 @@ async def account_status(message: Message) -> None:
             panel_id=reseller.panel_id,  # type: ignore[union-attr]
             panel_name=panel_name,
             quota_gb=st.quota_gb,
-            used_gb=st.used_gb,
+            active_gb=st.active_gb,
+            lifetime_gb=st.lifetime_gb,
             remaining_gb=st.remaining_gb,
             client_count=st.client_count,
             max_clients_line=format_max_clients_line(st),
@@ -948,7 +955,9 @@ async def service_traffic(
 
 
 @router.callback_query(F.data.regexp(r"^del:[^:]+$"))
-async def service_delete_prompt(callback: CallbackQuery) -> None:
+async def service_delete_prompt(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
     email = (callback.data or "").split(":", 1)[1]
     if not callback.from_user or not callback.message:
         await callback.answer()
@@ -964,8 +973,33 @@ async def service_delete_prompt(callback: CallbackQuery) -> None:
         if not record:
             await callback.answer(t.SERVICE_NOT_FOUND, show_alert=True)
             return
+
+    settings = get_settings()
+    threshold_gb = settings.quota_refund_max_traffic_gb
+    refund_hint = t.DELETE_CONFIRM_REFUND_UNKNOWN
+    try:
+        async with open_service_context(
+            panel_registry, callback.from_user.id, email
+        ) as (ctx, session):
+            svc = ResellerService(session, ctx.xui)
+            traffic = await svc.get_traffic(ctx.reseller, email)
+            used = client_traffic_used_bytes(traffic)
+            used_s = format_bytes(used)
+            if is_quota_refund_eligible(used, max_traffic_gb=threshold_gb):
+                refund_hint = t.DELETE_CONFIRM_REFUND_YES.format(used=used_s)
+            else:
+                refund_hint = t.DELETE_CONFIRM_REFUND_NO.format(
+                    used=used_s, threshold_gb=threshold_gb
+                )
+    except (ServiceNotFoundError, ServicePanelUnavailableError, XuiError):
+        pass
+
     await callback.message.edit_text(  # type: ignore[union-attr]
-        t.DELETE_CONFIRM.format(email=email),
+        t.DELETE_CONFIRM.format(
+            email=email,
+            refund_hint=refund_hint,
+            threshold_gb=threshold_gb,
+        ),
         parse_mode="Markdown",
         reply_markup=delete_confirm_kb(email),
     )
@@ -979,20 +1013,27 @@ async def service_delete_confirm(
     email = (callback.data or "").split(":", 1)[1]
     if not callback.from_user:
         return
+    result = DeleteServiceResult(refunded_bytes=0)
     try:
         async with open_service_context(
             panel_registry, callback.from_user.id, email
         ) as (ctx, session):
             svc = ResellerService(session, ctx.xui)
             try:
-                await svc.delete_service(ctx.reseller, email)
+                result = await svc.delete_service(ctx.reseller, email)
             except XuiError as e:
                 await callback.answer(str(e), show_alert=True)
                 return
     except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
         await answer_resolve_callback(callback, e)
         return
-    await callback.message.edit_text(t.SERVICE_DELETED)  # type: ignore[union-attr]
+    if result.refunded_bytes > 0:
+        deleted_text = t.SERVICE_DELETED_QUOTA_REFUNDED.format(
+            refund_gb=bytes_to_gb(result.refunded_bytes)
+        )
+    else:
+        deleted_text = t.SERVICE_DELETED
+    await callback.message.edit_text(deleted_text)  # type: ignore[union-attr]
     await callback.answer()
 
 

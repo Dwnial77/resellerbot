@@ -2,6 +2,7 @@
 
 # Reply keyboard — admin
 LIST_RESELLERS = "📋 لیست ریسلرها"
+REPORTS = "📈 گزارش‌گیری"
 SERVICE_TEMPLATES = "📐 قالب‌های سرویس"
 SET_PANEL_RESELLER = "🔄 تغییر پنل ریسلر"
 PANELS = "🖥 پنل‌ها"
@@ -15,6 +16,7 @@ ACCOUNT_STATUS = "👤 وضعیت حساب"
 
 # Common actions
 BACK = "◀️ بازگشت"
+REFRESH = "🔄 بروزرسانی"
 CANCEL = "❌ لغو"
 CONFIRM = "✅ تأیید"
 YES_DELETE = "✅ بله، حذف"
@@ -48,6 +50,8 @@ UNLIMITED_MAX_CLIENTS = "♾ نامحدود (حذف محدودیت)"
 
 # Reseller edit menu
 EDIT_QUOTA = "📊 سقف حجم (GB)"
+EDIT_ADD_QUOTA = "➕ افزودن سقف"
+RESET_QUOTA_USAGE = "🔄 ریست مصرف (پکیج جدید)"
 EDIT_MAX_CLIENTS = "🔢 سقف تعداد سرویس"
 EDIT_DISPLAY_NAME = "🏷 نام نمایشی"
 EDIT_ALLOWED_INBOUNDS = "🔌 اینباندهای مجاز"

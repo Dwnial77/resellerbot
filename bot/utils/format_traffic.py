@@ -24,6 +24,11 @@ def normalize_traffic_data(data: Any) -> dict[str, Any]:
     return {}
 
 
+def client_traffic_used_bytes(data: Any) -> int:
+    row = normalize_traffic_data(data)
+    return _coerce_int(row.get("up")) + _coerce_int(row.get("down"))
+
+
 def format_bytes(value: int) -> str:
     n = max(0, int(value))
     if n >= GB:
@@ -82,7 +87,7 @@ def format_traffic_message(email: str, data: Any) -> str:
     up = _coerce_int(row.get("up"))
     down = _coerce_int(row.get("down"))
     total = _coerce_int(row.get("total"))
-    used = up + down
+    used = client_traffic_used_bytes(row)
     enable = row.get("enable", True)
     inbound_id = row.get("inboundId", row.get("inbound_id", "—"))
     sub_id = row.get("subId") or row.get("sub_id") or "—"

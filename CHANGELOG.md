@@ -7,17 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-06-01
+
 ### Added
 
+- Admin **گزارش‌گیری**: select reseller → service count and allocation usage (quota / used / remaining); hub summary, progress bar, refresh button
+- `/add_quota` and `/reset_quota_usage` commands; admin buttons to add ceiling and reset quota consumption for a fresh package
+- Quota refund on service delete when actual traffic (up+down) is below 1 GB (configurable via `QUOTA_REFUND_MAX_TRAFFIC_GB`)
+- Lifetime quota tracking (`lifetime_allocated_bytes`) — consumption persists after service delete
 - `xui_for_reseller` with registry reload from DB when panel missing from cache
 - Clear reseller panel error messages (inactive / missing / not loaded)
 - `scripts/bootstrap.sh` for one-line VPS install (`curl | sudo bash`)
 
 ### Fixed
 
+- Deleting a service no longer frees reseller quota without traffic check; refund only when panel usage is under threshold
 - New resellers on panel #2+ could not create clients (`NO_PANEL_ACCESS`) until full bot restart
 - `scripts/install.sh` for one-step Linux VPS install
 - README quick install (curl + git clone) and GitHub links (`Dwnial77/resellerbot`)
+
+### Notes
+
+- DB migration **006** adds `lifetime_allocated_bytes` with backfill from active services on first startup after update
+- ZIP update via `/bot_update` preserves `data/` (database) and `.env`; automatic DB backup before apply
 
 ## [1.0.0] - 2026-06-01
 

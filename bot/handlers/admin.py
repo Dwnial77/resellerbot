@@ -15,13 +15,16 @@ from db.session import get_session_factory
 from services.quota import QuotaService
 from services.reseller_edit import (
     ResellerNotFoundError,
+    apply_add_quota,
     apply_allowed_inbounds,
     apply_attach_inbounds,
     apply_display_name,
     apply_max_clients,
     apply_quota,
+    apply_reset_quota_usage,
     clear_max_clients_limit,
 )
+from xui.client import gb_to_bytes
 from services.reseller_labels import (
     InvalidDisplayNameError,
     normalize_display_name,
@@ -176,6 +179,56 @@ async def set_quota(message: Message) -> None:
     async with get_session_factory()() as session:
         try:
             result = await apply_quota(session, tg_id, quota_gb)
+        except ResellerNotFoundError:
+            await message.answer("ریسلر یافت نشد.")
+            return
+    await message.answer(result.message_text)
+
+
+@router.message(Command("add_quota"))
+async def add_quota_cmd(message: Message) -> None:
+    if not _is_admin(message.from_user.id if message.from_user else None):
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 3:
+        await message.answer("فرمت: /add_quota TELEGRAM_ID ADD_GB")
+        return
+    try:
+        tg_id = int(parts[1])
+        add_gb = float(parts[2].replace(",", "."))
+    except ValueError:
+        await message.answer(t.INVALID_INPUT)
+        return
+
+    async with get_session_factory()() as session:
+        try:
+            result = await apply_add_quota(session, tg_id, add_gb)
+        except ResellerNotFoundError:
+            await message.answer("ریسلر یافت نشد.")
+            return
+        except ValueError as e:
+            await message.answer(str(e))
+            return
+    await message.answer(result.message_text)
+
+
+@router.message(Command("reset_quota_usage"))
+async def reset_quota_usage_cmd(message: Message) -> None:
+    if not _is_admin(message.from_user.id if message.from_user else None):
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 2:
+        await message.answer("فرمت: /reset_quota_usage TELEGRAM_ID")
+        return
+    try:
+        tg_id = int(parts[1])
+    except ValueError:
+        await message.answer(t.INVALID_INPUT)
+        return
+
+    async with get_session_factory()() as session:
+        try:
+            result = await apply_reset_quota_usage(session, tg_id)
         except ResellerNotFoundError:
             await message.answer("ریسلر یافت نشد.")
             return

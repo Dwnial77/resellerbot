@@ -11,7 +11,7 @@ from db.models import Reseller
 from db.repository import ResellerRepository, resolve_attach_inbound_ids
 from services.quota import QuotaService
 from services.reseller_labels import reseller_label
-from xui.client import gb_to_bytes
+from xui.client import bytes_to_gb, gb_to_bytes
 
 
 class ResellerNotFoundError(LookupError):
@@ -36,6 +36,47 @@ async def apply_quota(
         reseller=row,
         message_text=t.QUOTA_UPDATED.format(
             label=reseller_label(row), quota_gb=quota_gb
+        ),
+    )
+
+
+async def apply_add_quota(
+    session: AsyncSession, telegram_id: int, add_gb: float
+) -> EditResult:
+    repo = ResellerRepository(session)
+    row = await repo.get(telegram_id)
+    if not row:
+        raise ResellerNotFoundError()
+    if add_gb <= 0:
+        raise ValueError("مقدار افزایش باید بزرگ‌تر از صفر باشد.")
+    row = await repo.add_quota_bytes(telegram_id, gb_to_bytes(add_gb))
+    assert row is not None
+    return EditResult(
+        reseller=row,
+        message_text=t.QUOTA_ADDED.format(
+            label=reseller_label(row),
+            add_gb=add_gb,
+            quota_gb=bytes_to_gb(row.quota_bytes),
+        ),
+    )
+
+
+async def apply_reset_quota_usage(
+    session: AsyncSession, telegram_id: int
+) -> EditResult:
+    repo = ResellerRepository(session)
+    row = await repo.get(telegram_id)
+    if not row:
+        raise ResellerNotFoundError()
+    row = await repo.reset_lifetime_to_active(telegram_id)
+    assert row is not None
+    st = await QuotaService(repo).status(row)
+    return EditResult(
+        reseller=row,
+        message_text=t.QUOTA_USAGE_RESET.format(
+            label=reseller_label(row),
+            lifetime_gb=st.lifetime_gb,
+            remaining_gb=st.remaining_gb,
         ),
     )
 

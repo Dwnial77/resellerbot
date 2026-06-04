@@ -10,11 +10,13 @@ from bot.keyboards import labels as btn
 from bot.keyboards.common import (
     reseller_admin_hub_kb,
     reseller_delete_confirm_kb,
+    reseller_edit_add_quota_kb,
     reseller_edit_attach_inbounds_kb,
     reseller_edit_inbounds_kb,
     reseller_edit_max_clients_kb,
     reseller_edit_menu_kb,
     reseller_edit_quota_kb,
+    reseller_reset_quota_confirm_kb,
     reseller_view_kb,
     reseller_wizard_confirm_kb,
     reseller_wizard_inbounds_kb,
@@ -35,11 +37,13 @@ from services.panel_registry import PanelNotFoundError, PanelRegistry
 from services.quota import QuotaService, format_max_clients_admin
 from services.reseller_edit import (
     ResellerNotFoundError,
+    apply_add_quota,
     apply_allowed_inbounds,
     apply_attach_inbounds,
     apply_display_name,
     apply_max_clients,
     apply_quota,
+    apply_reset_quota_usage,
     clear_max_clients_limit,
 )
 from services.reseller_labels import (
@@ -109,7 +113,8 @@ async def _reseller_view_content(
         panel_name=panel_name,
         panel_id=reseller.panel_id,
         quota_gb=st.quota_gb,
-        used_gb=st.used_gb,
+        active_gb=st.active_gb,
+        lifetime_gb=st.lifetime_gb,
         remaining_gb=st.remaining_gb,
         client_count=client_count,
         max_clients_line=format_max_clients_admin(st),
@@ -672,6 +677,102 @@ async def edit_quota_quick(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("rsl:ev:addq:"))
+async def edit_start_add_quota(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id if callback.from_user else None):
+        return
+    if not callback.data or not callback.message:
+        await callback.answer()
+        return
+    tg_id = int(callback.data.split(":", 3)[3])
+    reseller = await _reseller_for_edit(tg_id)
+    if not reseller:
+        await callback.answer("ریسلر یافت نشد.", show_alert=True)
+        return
+    await state.set_state(EditResellerStates.value)
+    await state.update_data(reseller_tg_id=tg_id, edit_kind="add_quota")
+    await callback.message.edit_text(
+        t.RESELLER_EDIT_ADD_QUOTA_PROMPT.format(label=reseller_label(reseller)),
+        reply_markup=reseller_edit_add_quota_kb(tg_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rsl:eaq:"))
+async def edit_add_quota_quick(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id if callback.from_user else None):
+        return
+    if not callback.data or not callback.message:
+        await callback.answer()
+        return
+    parts = callback.data.split(":")
+    add_gb = float(parts[2])
+    tg_id = int(parts[3])
+    async with get_session_factory()() as session:
+        try:
+            result = await apply_add_quota(session, tg_id, add_gb)
+        except ResellerNotFoundError:
+            await callback.answer("ریسلر یافت نشد.", show_alert=True)
+            return
+        except ValueError as e:
+            await callback.answer(str(e)[:200], show_alert=True)
+            return
+    await _finish_edit_view(callback.message, state, tg_id, result.message_text)  # type: ignore[arg-type]
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rsl:ev:resetu:"))
+async def edit_start_reset_quota(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id if callback.from_user else None):
+        return
+    if not callback.data or not callback.message:
+        await callback.answer()
+        return
+    tg_id = int(callback.data.split(":", 3)[3])
+    reseller = await _reseller_for_edit(tg_id)
+    if not reseller:
+        await callback.answer("ریسلر یافت نشد.", show_alert=True)
+        return
+    await state.clear()
+    await callback.message.edit_text(
+        t.RESELLER_RESET_QUOTA_CONFIRM.format(label=reseller_label(reseller)),
+        reply_markup=reseller_reset_quota_confirm_kb(tg_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rsl:resetu:yes:"))
+async def edit_reset_quota_confirm(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id if callback.from_user else None):
+        return
+    if not callback.data or not callback.message:
+        await callback.answer()
+        return
+    tg_id = int(callback.data.split(":", 3)[3])
+    async with get_session_factory()() as session:
+        try:
+            result = await apply_reset_quota_usage(session, tg_id)
+        except ResellerNotFoundError:
+            await callback.answer("ریسلر یافت نشد.", show_alert=True)
+            return
+    await _finish_edit_view(callback.message, state, tg_id, result.message_text)  # type: ignore[arg-type]
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rsl:resetu:no:"))
+async def edit_reset_quota_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id if callback.from_user else None):
+        return
+    if not callback.data or not callback.message:
+        await callback.answer()
+        return
+    tg_id = int(callback.data.split(":", 3)[3])
+    if not await _edit_reseller_view(callback.message, tg_id):  # type: ignore[arg-type]
+        await callback.answer("ریسلر یافت نشد.", show_alert=True)
+        return
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("rsl:ev:name:"))
 async def edit_start_name(callback: CallbackQuery, state: FSMContext) -> None:
     if not _is_admin(callback.from_user.id if callback.from_user else None):
@@ -919,6 +1020,11 @@ async def edit_value_text(message: Message, state: FSMContext) -> None:
                 if quota_gb <= 0:
                     raise ValueError
                 result = await apply_quota(session, tg_id, quota_gb)
+            elif kind == "add_quota":
+                add_gb = float(text_in.replace(",", "."))
+                if add_gb <= 0:
+                    raise ValueError
+                result = await apply_add_quota(session, tg_id, add_gb)
             elif kind == "name":
                 display_name = normalize_display_name(text_in)
                 result = await apply_display_name(session, tg_id, display_name)

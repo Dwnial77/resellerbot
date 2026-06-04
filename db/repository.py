@@ -234,13 +234,55 @@ class ResellerRepository:
         await self.session.refresh(row)
         return row
 
-    async def used_bytes(self, telegram_id: int) -> int:
+    async def active_bytes(self, telegram_id: int) -> int:
         result = await self.session.scalar(
             select(func.coalesce(func.sum(ClientRecord.allocated_bytes), 0)).where(
                 ClientRecord.reseller_tg_id == telegram_id
             )
         )
         return int(result or 0)
+
+    async def used_bytes(self, telegram_id: int) -> int:
+        """Sum of active service allocations (alias for active_bytes)."""
+        return await self.active_bytes(telegram_id)
+
+    async def add_lifetime_allocated(self, telegram_id: int, delta: int) -> None:
+        row = await self.get(telegram_id)
+        if not row:
+            raise ValueError("ریسلر یافت نشد.")
+        row.lifetime_allocated_bytes += delta
+        await self.session.commit()
+        await self.session.refresh(row)
+
+    async def subtract_lifetime_allocated(
+        self, telegram_id: int, delta: int
+    ) -> None:
+        row = await self.get(telegram_id)
+        if not row:
+            raise ValueError("ریسلر یافت نشد.")
+        row.lifetime_allocated_bytes = max(
+            0, int(row.lifetime_allocated_bytes or 0) - delta
+        )
+        await self.session.commit()
+        await self.session.refresh(row)
+
+    async def reset_lifetime_to_active(self, telegram_id: int) -> Reseller | None:
+        row = await self.get(telegram_id)
+        if not row:
+            return None
+        row.lifetime_allocated_bytes = await self.active_bytes(telegram_id)
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def add_quota_bytes(self, telegram_id: int, delta: int) -> Reseller | None:
+        row = await self.get(telegram_id)
+        if not row:
+            return None
+        row.quota_bytes += delta
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
 
     async def client_count(self, telegram_id: int) -> int:
         result = await self.session.scalar(
