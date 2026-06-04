@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - DB migration **006** adds `lifetime_allocated_bytes` with backfill from active services on first startup after update
 - ZIP update via `/bot_update` preserves `data/` (database) and `.env`; automatic DB backup before apply
+- Build release ZIP with `scripts/build_release_zip.sh` or `scripts/build_release_zip.ps1` (not manual Windows zip)
 
 ## [1.0.0] - 2026-06-01
 

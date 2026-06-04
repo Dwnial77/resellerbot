@@ -155,14 +155,43 @@ sudo systemctl restart resellerbot
 3. گزینه **اعمال و ری‌استارت** را انتخاب کنید. سرویس ری‌استارت شده و کدها و وابستگی‌ها آپدیت می‌شوند (فایل `.env` و دیتابیس `data/bot.db` کاملاً حفظ می‌شوند).
     
 4. با دستور `/version` می‌توانید نسخه فعلی را چک کنید.
-    
+
+**یک‌بار روی VPS (اگر `/bot_update` خطای `bot/version.py` می‌دهد):**
+
+اگر سرور هنوز updater قدیمی دارد، قبل از آپلود ZIP یک‌بار از git آپدیت کنید:
+
+```bash
+cd /opt/resellerbot   # مسیر نصب شما
+git pull
+source .venv/bin/activate
+pip install -r requirements.txt
+sudo systemctl restart resellerbot
+```
+
+بعد `/version` باید نسخه جدید را نشان دهد؛ سپس ZIP را دوباره در `/bot_update` بفرستید.
 
 **ساخت فایل ZIP ریلیز (روی سیستم توسعه):**
 
+```bash
+bash scripts/build_release_zip.sh              # dist/resellerbot-X.Y.Z.zip
+bash scripts/build_release_zip.sh source       # dist/resellerbot-X.Y.Z-source.zip (git archive)
+bash scripts/build_release_zip.sh all          # هر دو
+
+# Windows (PowerShell):
+powershell -ExecutionPolicy Bypass -File scripts/build_release_zip.ps1
+powershell -ExecutionPolicy Bypass -File scripts/build_release_zip.ps1 -Target source
+powershell -ExecutionPolicy Bypass -File scripts/build_release_zip.ps1 -Target all
 ```
-bash scripts/build_release_zip.sh
-# خروجی در مسیر: dist/resellerbot-1.1.0.zip
+
+برای GitHub Release از **`resellerbot-X.Y.Z.zip`** (اسکریپت release) استفاده کنید — نه zip دستی کل پروژه (شامل `.env`، `data/`، `.venv` نیست).
+
+قبل از آپلود در ربات، ZIP را validate کنید:
+
+```bash
+python -c "from pathlib import Path; from services.updater import inspect_release_zip; print(inspect_release_zip(Path('dist/resellerbot-1.1.0.zip'), current_version='1.0.0'))"
 ```
+
+> برای آپدیت `/bot_update` حتماً از اسکریپت بالا استفاده کنید؛ zip دستی Windows ممکن است ساختار `bot/version.py` را درست نسازد.
 
 > ⚠️ **توجه:** روی سرور پروداکشن (Production) فقط از روش ZIP یا فقط از روش `git pull` استفاده کنید؛ ترکیب همزمان هر دو روش توصیه نمی‌شود.
 

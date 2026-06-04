@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,10 +40,113 @@ _RELEASE_ROOT_ENTRIES = frozenset(
 )
 
 _REQUIRED_IN_ZIP = ("bot/version.py",)
+_BOT_VERSION_REL = "bot/version.py"
+_MAX_RELEASE_ROOT_DEPTH = 4
 
 
 class UpdateError(Exception):
     pass
+
+
+def _normalize_zip_path(name: str) -> str:
+    return name.replace("\\", "/").lstrip("/")
+
+
+def _has_required_files(root: Path) -> bool:
+    return all((root / req).is_file() for req in _REQUIRED_IN_ZIP)
+
+
+def _zip_entry_sample(zip_path: Path, limit: int = 8) -> str:
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        names = [
+            _normalize_zip_path(info.filename)
+            for info in zf.infolist()
+            if not info.is_dir()
+        ][:limit]
+    if not names:
+        return "(ZIP خالی)"
+    return ", ".join(names)
+
+
+def _missing_version_error(zip_path: Path) -> UpdateError:
+    return UpdateError(
+        "فایل الزامی در ZIP نیست: bot/version.py\n"
+        f"نمونه مسیرهای داخل ZIP: {_zip_entry_sample(zip_path)}"
+    )
+
+
+def _is_bot_version_path(path: str) -> bool:
+    return path == _BOT_VERSION_REL or path.endswith(f"/{_BOT_VERSION_REL}")
+
+
+def _find_bot_version_path_in_zip(zf: zipfile.ZipFile, zip_path: Path) -> str:
+    matches = [
+        _normalize_zip_path(info.filename)
+        for info in zf.infolist()
+        if not info.is_dir() and _is_bot_version_path(_normalize_zip_path(info.filename))
+    ]
+    if not matches:
+        raise _missing_version_error(zip_path)
+    return sorted(matches)[0]
+
+
+def _release_prefix_from_version_path(version_path: str) -> str:
+    if version_path == _BOT_VERSION_REL:
+        return ""
+    suffix = f"/{_BOT_VERSION_REL}"
+    if version_path.endswith(suffix):
+        return version_path[: -len(suffix)] + "/"
+    return ""
+
+
+def _parse_version_from_text(text: str) -> str:
+    for line in text.splitlines():
+        if line.strip().startswith("__version__"):
+            part = line.split("=", 1)[1].strip().strip('"').strip("'")
+            return part
+    raise UpdateError("نسخه در bot/version.py یافت نشد.")
+
+
+def read_version_from_zip(zip_path: Path) -> str:
+    """Read target version from ZIP members without extracting."""
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        version_path = _find_bot_version_path_in_zip(zf, zip_path)
+        prefix = _release_prefix_from_version_path(version_path)
+        release_key = f"{prefix}RELEASE.json" if prefix else "RELEASE.json"
+        names = {_normalize_zip_path(i.filename) for i in zf.infolist() if not i.is_dir()}
+        if release_key in names:
+            try:
+                data = json.loads(zf.read(release_key).decode("utf-8"))
+                ver = data.get("version")
+                if isinstance(ver, str) and ver.strip():
+                    return ver.strip()
+            except (json.JSONDecodeError, UnicodeDecodeError, KeyError):
+                pass
+        text = zf.read(version_path).decode("utf-8")
+        return _parse_version_from_text(text)
+
+
+def find_release_root(tree: Path, *, zip_path: Path | None = None) -> Path:
+    """Locate release root containing bot/version.py (BFS up to max depth)."""
+    if _has_required_files(tree):
+        return tree
+    queue: deque[tuple[Path, int]] = deque([(tree, 0)])
+    while queue:
+        node, depth = queue.popleft()
+        if _has_required_files(node):
+            return node
+        if depth >= _MAX_RELEASE_ROOT_DEPTH:
+            continue
+        try:
+            children = sorted(node.iterdir(), key=lambda p: p.name)
+        except OSError:
+            continue
+        for child in children:
+            if child.is_dir() and child.name not in ("__MACOSX",):
+                queue.append((child, depth + 1))
+    if zip_path is not None:
+        raise _missing_version_error(zip_path)
+    raise UpdateError("فایل الزامی در ZIP نیست: bot/version.py")
 
 
 @dataclass(frozen=True)
@@ -113,36 +217,36 @@ def read_version_from_tree(root: Path) -> str:
     version_py = root / "bot" / "version.py"
     if not version_py.is_file():
         raise UpdateError("bot/version.py در بسته یافت نشد.")
-    text = version_py.read_text(encoding="utf-8")
-    for line in text.splitlines():
-        if line.strip().startswith("__version__"):
-            part = line.split("=", 1)[1].strip().strip('"').strip("'")
-            return part
-    raise UpdateError("نسخه در bot/version.py یافت نشد.")
+    return _parse_version_from_text(version_py.read_text(encoding="utf-8"))
 
 
-def _safe_extract(zip_path: Path, dest: Path) -> Path:
+def _extract_release_zip(zip_path: Path, dest: Path) -> Path:
+    """Extract release files, stripping any top-level folder prefix from ZIP paths."""
+    if dest.exists():
+        shutil.rmtree(dest, ignore_errors=True)
     dest.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path, "r") as zf:
+        version_path = _find_bot_version_path_in_zip(zf, zip_path)
+        prefix = _release_prefix_from_version_path(version_path)
         for info in zf.infolist():
             if info.is_dir():
                 continue
-            name = info.filename.replace("\\", "/")
-            if name.startswith("/") or ".." in name.split("/"):
+            norm = _normalize_zip_path(info.filename)
+            if ".." in norm.split("/"):
                 raise UpdateError("فایل ZIP نامعتبر (مسیر ناامن).")
-        zf.extractall(dest)
-    # GitHub source zip has one top-level folder
-    children = [p for p in dest.iterdir() if p.name not in ("__MACOSX",)]
-    if len(children) == 1 and children[0].is_dir():
-        return children[0]
-    return dest
-
-
-def _validate_release_tree(tree: Path) -> str:
-    for req in _REQUIRED_IN_ZIP:
-        if not (tree / req).is_file():
-            raise UpdateError(f"فایل الزامی در ZIP نیست: {req}")
-    return read_version_from_tree(tree)
+            if prefix:
+                if not norm.startswith(prefix):
+                    continue
+                rel = norm[len(prefix) :]
+            else:
+                rel = norm
+            if not rel:
+                continue
+            target = dest / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info, "r") as src, target.open("wb") as out:
+                shutil.copyfileobj(src, out)
+    return find_release_root(dest, zip_path=zip_path)
 
 
 def inspect_release_zip(
@@ -153,14 +257,7 @@ def inspect_release_zip(
 ) -> str:
     if not zip_path.is_file():
         raise UpdateError("فایل ZIP یافت نشد.")
-    staging = data_dir() / "inspect_update"
-    if staging.exists():
-        shutil.rmtree(staging, ignore_errors=True)
-    try:
-        tree = _safe_extract(zip_path, staging)
-        target = _validate_release_tree(tree)
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
+    target = read_version_from_zip(zip_path)
     cmp = compare_versions(target, current_version)
     if cmp < 0 and not allow_downgrade:
         raise UpdateError(
@@ -282,16 +379,14 @@ def apply_pending_update(
         return None
     previous = RUNNING_VERSION
     staging = data_dir(root) / "staging_update"
-    if staging.exists():
-        shutil.rmtree(staging, ignore_errors=True)
     target = previous
     try:
-        tree = _safe_extract(zip_path, staging)
-        target = _validate_release_tree(tree)
+        target = read_version_from_zip(zip_path)
         if compare_versions(target, previous) < 0 and not allow_downgrade:
             raise UpdateError("downgrade blocked")
+        release_root = _extract_release_zip(zip_path, staging)
         _backup_database(root)
-        _copy_release_into_install(tree, root)
+        _copy_release_into_install(release_root, root)
         _run_pip_install(root)
         clear_pending(root)
         result = UpdateResult(
