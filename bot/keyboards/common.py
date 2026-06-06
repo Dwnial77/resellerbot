@@ -44,6 +44,36 @@ def admin_main_kb() -> ReplyKeyboardMarkup:
     )
 
 
+def bot_update_menu_kb(*, github_enabled: bool = True) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if github_enabled:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="📥 آپدیت از GitHub",
+                    callback_data="upd:github",
+                ),
+                InlineKeyboardButton(
+                    text="📎 آپلود ZIP",
+                    callback_data="upd:manual",
+                ),
+            ]
+        )
+    else:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="📎 آپلود ZIP",
+                    callback_data="upd:manual",
+                ),
+            ]
+        )
+    rows.append(
+        [InlineKeyboardButton(text=L.CANCEL, callback_data="upd:cancel_menu")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def bot_update_confirm_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -780,6 +810,50 @@ def expiry_mode_kb(email: str) -> InlineKeyboardMarkup:
     )
 
 
+def add_traffic_volume_kb(email: str) -> InlineKeyboardMarkup:
+    volumes = (5, 10, 20, 50)
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"+{v} GB", callback_data=f"traf_vol:{v}"
+            )
+            for v in volumes[:2]
+        ],
+        [
+            InlineKeyboardButton(
+                text=f"+{v} GB", callback_data=f"traf_vol:{v}"
+            )
+            for v in volumes[2:]
+        ],
+        [
+            InlineKeyboardButton(
+                text=L.MANUAL_ENTRY, callback_data="traf_custom"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text=L.CANCEL, callback_data=f"traf_cancel:{email}"
+            ),
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def add_traffic_confirm_kb(email: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.CONFIRM, callback_data="traf_confirm"
+                ),
+                InlineKeyboardButton(
+                    text=L.CANCEL, callback_data=f"traf_cancel:{email}"
+                ),
+            ],
+        ]
+    )
+
+
 def delete_confirm_kb(email: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -884,6 +958,11 @@ def service_detail_kb(email: str, *, enabled: bool = True) -> InlineKeyboardMark
                 InlineKeyboardButton(
                     text=L.CHANGE_EXPIRY, callback_data=f"exp:{email}"
                 ),
+                InlineKeyboardButton(
+                    text=L.ADD_TRAFFIC, callback_data=f"traf:{email}"
+                ),
+            ],
+            [
                 InlineKeyboardButton(
                     text=L.EDIT_SERVICE, callback_data=f"edit:{email}"
                 ),

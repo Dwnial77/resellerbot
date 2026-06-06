@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Admin bot update menu: **آپدیت از GitHub** downloads latest `resellerbot-X.Y.Z.zip` from GitHub Releases automatically (public repo, no token)
+- Manual ZIP upload remains available via **آپلود ZIP**
+- Settings: `GITHUB_REPO`, `GITHUB_UPDATE_ENABLED`
+
+## [1.1.5] - 2026-06-01
+
+### Added
+
+- Reseller **افزودن ترافیک** on existing service from service detail: top-up client limit via panel `bulkAdjust`, deducts from reseller quota (lifetime allocation)
+- Confirm step shows current service cap, added volume, and remaining quota before apply
+- Quick volume buttons (5/10/20/50 GB) plus custom GB input
+
 ## [1.1.0] - 2026-06-01
 
 ### Added

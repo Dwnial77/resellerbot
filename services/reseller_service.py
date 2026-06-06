@@ -38,6 +38,13 @@ class DeleteServiceResult:
     refunded_bytes: int
 
 
+@dataclass
+class AddTrafficResult:
+    added_bytes: int
+    new_total_bytes: int
+    remaining_bytes: int
+
+
 def is_quota_refund_eligible(
     used_bytes: int, *, max_traffic_gb: float | None = None
 ) -> bool:
@@ -211,6 +218,26 @@ class ResellerService:
     async def reset_service_traffic(self, reseller: Reseller, email: str) -> None:
         await self._get_owned_record(reseller, email)
         await self.xui.reset_client_traffic(email)
+
+    async def add_service_traffic(
+        self, reseller: Reseller, email: str, volume_gb: float
+    ) -> AddTrafficResult:
+        record = await self._get_owned_record(reseller, email)
+        try:
+            allocated = await self.quota.validate_add_traffic(reseller, volume_gb)
+        except QuotaExceeded as e:
+            raise XuiError(str(e)) from e
+        await self.xui.add_client_traffic_bytes(email, allocated)
+        record = await self.client_repo.add_allocated_bytes(record, allocated)
+        await self.reseller_repo.add_lifetime_allocated(
+            reseller.telegram_id, allocated
+        )
+        st = await self.quota.status(reseller)
+        return AddTrafficResult(
+            added_bytes=allocated,
+            new_total_bytes=record.allocated_bytes,
+            remaining_bytes=st.remaining_bytes,
+        )
 
     async def update_service_limit_ip(
         self, reseller: Reseller, email: str, limit_ip: int

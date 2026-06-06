@@ -13,6 +13,11 @@ class ExtendExpiryStates(StatesGroup):
     set_date = State()
 
 
+class AddTrafficStates(StatesGroup):
+    volume = State()
+    confirm = State()
+
+
 class EditServiceStates(StatesGroup):
     limit_ip = State()
     comment = State()

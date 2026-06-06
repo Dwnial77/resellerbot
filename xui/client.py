@@ -424,6 +424,17 @@ class XuiClient:
             json={"emails": [email], "addDays": days, "addBytes": 0},
         )
 
+    async def add_client_traffic_bytes(
+        self, email: str, add_bytes: int
+    ) -> dict[str, Any]:
+        if add_bytes < 1:
+            raise XuiError("حجم اضافه باید بزرگ‌تر از صفر باشد.")
+        return await self._request(
+            "POST",
+            "/panel/api/clients/bulkAdjust",
+            json={"emails": [email], "addDays": 0, "addBytes": add_bytes},
+        )
+
     async def set_client_expiry_ms(self, email: str, expiry_ms: int) -> dict[str, Any]:
         data = await self._request(
             "GET", f"/panel/api/clients/get/{quote(email, safe='')}"

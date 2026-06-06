@@ -105,3 +105,21 @@ class QuotaService:
                 f"({st.remaining_gb} GB) است."
             )
         return allocated
+
+    async def validate_add_traffic(
+        self, reseller: Reseller, volume_gb: float
+    ) -> int:
+        if not reseller.is_active:
+            raise QuotaExceeded("حساب ریسلر غیرفعال است.")
+
+        allocated = gb_to_bytes(volume_gb)
+        if allocated <= 0:
+            raise QuotaExceeded("حجم باید بزرگ‌تر از صفر باشد.")
+
+        st = await self.status(reseller)
+        if allocated > st.remaining_bytes:
+            raise QuotaExceeded(
+                f"حجم درخواستی ({bytes_to_gb(allocated)} GB) بیشتر از باقی‌مانده "
+                f"({st.remaining_gb} GB) است."
+            )
+        return allocated

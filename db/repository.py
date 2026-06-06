@@ -399,6 +399,14 @@ class ClientRepository:
         await self.session.refresh(record)
         return record
 
+    async def add_allocated_bytes(
+        self, record: ClientRecord, delta: int
+    ) -> ClientRecord:
+        record.allocated_bytes += delta
+        await self.session.commit()
+        await self.session.refresh(record)
+        return record
+
     async def delete(self, record: ClientRecord) -> None:
         await self.session.delete(record)
         await self.session.commit()

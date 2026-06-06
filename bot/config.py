@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     systemd_service_name: str = "resellerbot"
     allow_update_downgrade: bool = False
 
+    github_repo: str = "Dwnial77/resellerbot"
+    github_update_enabled: bool = True
+
     @field_validator("admin_telegram_ids", mode="before")
     @classmethod
     def parse_admin_ids(cls, v):

@@ -18,7 +18,7 @@ RESELLER_COMMANDS = [
 ADMIN_COMMANDS = [
     BotCommand(command="admin", description="راهنمای کوتاه ادمین"),
     BotCommand(command="version", description="نسخه ربات"),
-    BotCommand(command="bot_update", description="آپدیت ربات با ZIP"),
+    BotCommand(command="bot_update", description="آپدیت ربات (GitHub یا ZIP)"),
     BotCommand(command="list_resellers", description="هاب مدیریت ریسلرها"),
     BotCommand(command="reports", description="گزارش ریسلرها"),
     BotCommand(command="set_quota", description="تغییر سقف حجم (آیدی و GB)"),

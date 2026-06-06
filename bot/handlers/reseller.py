@@ -7,6 +7,8 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from bot.config import get_settings
 from bot.keyboards import labels as btn
 from bot.keyboards.common import (
+    add_traffic_confirm_kb,
+    add_traffic_volume_kb,
     client_name_kb,
     confirm_create_kb,
     create_cancel_kb,
@@ -19,7 +21,7 @@ from bot.keyboards.common import (
     template_picker_kb,
     vless_qr_kb,
 )
-from bot.states import CreateServiceStates, EditServiceStates, ExtendExpiryStates
+from bot.states import AddTrafficStates, CreateServiceStates, EditServiceStates, ExtendExpiryStates
 from bot.texts import fa as t
 from bot.utils.edit_service import (
     InvalidEditInputError,
@@ -660,6 +662,227 @@ async def expiry_set_unlimited(
 
 @router.callback_query(F.data.startswith("exp_cancel:"))
 async def expiry_cancel(
+    callback: CallbackQuery,
+    state: FSMContext,
+    panel_registry: PanelRegistry,
+) -> None:
+    email = (callback.data or "").split(":", 1)[1]
+    await state.clear()
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    try:
+        await _show_service_detail(
+            callback.message, email, callback.from_user.id, panel_registry  # type: ignore[arg-type]
+        )
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
+    await callback.answer()
+
+
+async def _show_add_traffic_confirm(
+    message: Message,
+    state: FSMContext,
+    *,
+    user_id: int,
+    email: str,
+    volume_gb: float,
+    panel_registry: PanelRegistry,
+    edit: bool = True,
+) -> bool:
+    try:
+        async with open_service_context(
+            panel_registry, user_id, email
+        ) as (ctx, session):
+            quota = QuotaService(ResellerRepository(session))
+            st = await quota.status(ctx.reseller)
+            current_gb = bytes_to_gb(ctx.record.allocated_bytes)
+            remaining_before = st.remaining_gb
+            if volume_gb > remaining_before:
+                await message.answer(
+                    f"حجم درخواستی ({volume_gb} GB) بیشتر از باقی‌مانده "
+                    f"({remaining_before} GB) است."
+                )
+                return False
+            text = t.ADD_TRAFFIC_CONFIRM.format(
+                email=email,
+                add_gb=volume_gb,
+                current_gb=current_gb,
+                new_gb=current_gb + volume_gb,
+                remaining_before_gb=remaining_before,
+                remaining_after_gb=remaining_before - volume_gb,
+            )
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_message(message, e)
+        return False
+    await state.update_data(email=email, volume_gb=volume_gb)
+    await state.set_state(AddTrafficStates.confirm)
+    if edit:
+        await message.edit_text(
+            text, parse_mode="Markdown", reply_markup=add_traffic_confirm_kb(email)
+        )
+    else:
+        await message.answer(
+            text, parse_mode="Markdown", reply_markup=add_traffic_confirm_kb(email)
+        )
+    return True
+
+
+@router.callback_query(F.data.regexp(r"^traf:[^:]+$"))
+async def add_traffic_menu(
+    callback: CallbackQuery,
+    state: FSMContext,
+    panel_registry: PanelRegistry,
+) -> None:
+    email = (callback.data or "").split(":", 1)[1]
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    await state.clear()
+    await state.update_data(email=email)
+    try:
+        async with open_service_context(
+            panel_registry, callback.from_user.id, email
+        ) as (ctx, session):
+            quota = QuotaService(ResellerRepository(session))
+            st = await quota.status(ctx.reseller)
+            current_gb = bytes_to_gb(ctx.record.allocated_bytes)
+            text = t.ADD_TRAFFIC_CHOOSE.format(
+                email=email,
+                current_gb=current_gb,
+                remaining_gb=st.remaining_gb,
+            )
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
+    await callback.message.edit_text(  # type: ignore[union-attr]
+        text,
+        parse_mode="Markdown",
+        reply_markup=add_traffic_volume_kb(email),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("traf_vol:"))
+async def add_traffic_quick_volume(
+    callback: CallbackQuery,
+    state: FSMContext,
+    panel_registry: PanelRegistry,
+) -> None:
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    try:
+        volume_gb = float((callback.data or "").split(":", 1)[1])
+        if volume_gb <= 0:
+            raise ValueError
+    except (ValueError, IndexError):
+        await callback.answer(t.INVALID_INPUT, show_alert=True)
+        return
+    data = await state.get_data()
+    email = data.get("email")
+    if not email:
+        await callback.answer(t.INVALID_INPUT, show_alert=True)
+        return
+    ok = await _show_add_traffic_confirm(
+        callback.message,  # type: ignore[arg-type]
+        state,
+        user_id=callback.from_user.id,
+        email=email,
+        volume_gb=volume_gb,
+        panel_registry=panel_registry,
+    )
+    if ok:
+        await callback.answer()
+
+
+@router.callback_query(F.data == "traf_custom")
+async def add_traffic_custom_start(
+    callback: CallbackQuery, state: FSMContext
+) -> None:
+    data = await state.get_data()
+    if not data.get("email"):
+        await callback.answer(t.INVALID_INPUT, show_alert=True)
+        return
+    await state.set_state(AddTrafficStates.volume)
+    await callback.message.edit_text(t.ADD_TRAFFIC_PROMPT)  # type: ignore[union-attr]
+    await callback.answer()
+
+
+@router.message(AddTrafficStates.volume)
+async def add_traffic_custom_volume(
+    message: Message, state: FSMContext, panel_registry: PanelRegistry
+) -> None:
+    if not message.from_user:
+        return
+    data = await state.get_data()
+    email = data.get("email")
+    if not email:
+        await state.clear()
+        await message.answer(t.INVALID_INPUT)
+        return
+    try:
+        volume_gb = float((message.text or "").replace(",", "."))
+        if volume_gb <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer(t.INVALID_INPUT)
+        return
+    await _show_add_traffic_confirm(
+        message,
+        state,
+        user_id=message.from_user.id,
+        email=email,
+        volume_gb=volume_gb,
+        panel_registry=panel_registry,
+        edit=False,
+    )
+
+
+@router.callback_query(F.data == "traf_confirm")
+async def add_traffic_confirm(
+    callback: CallbackQuery,
+    state: FSMContext,
+    panel_registry: PanelRegistry,
+) -> None:
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    data = await state.get_data()
+    email = data.get("email")
+    volume_gb = data.get("volume_gb")
+    if not email or volume_gb is None:
+        await state.clear()
+        await callback.answer(t.INVALID_INPUT, show_alert=True)
+        return
+    await state.clear()
+    try:
+        async with open_service_context(
+            panel_registry, callback.from_user.id, email
+        ) as (ctx, session):
+            svc = ResellerService(session, ctx.xui)
+            try:
+                result = await svc.add_service_traffic(
+                    ctx.reseller, email, float(volume_gb)
+                )
+            except XuiError as e:
+                await callback.answer(str(e), show_alert=True)
+                return
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
+    await callback.message.edit_text(  # type: ignore[union-attr]
+        t.ADD_TRAFFIC_OK.format(
+            new_total_gb=bytes_to_gb(result.new_total_bytes),
+            remaining_gb=bytes_to_gb(result.remaining_bytes),
+        )
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("traf_cancel:"))
+async def add_traffic_cancel(
     callback: CallbackQuery,
     state: FSMContext,
     panel_registry: PanelRegistry,
