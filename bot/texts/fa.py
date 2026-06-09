@@ -41,6 +41,12 @@ RESELLER_PANEL_INACTIVE = (
     "پنل {panel_name} (#{panel_id}) غیرفعال است. با ادمین تماس بگیرید."
 )
 RESELLER_PANEL_MISSING = "پنل #{panel_id} ثبت نشده است. با ادمین تماس بگیرید."
+RESELLER_PANEL_NOT_ASSIGNED = (
+    "پنل #{panel_id} به حساب شما اختصاص داده نشده. با ادمین تماس بگیرید."
+)
+RESELLER_PANEL_ASSIGNMENT_INACTIVE = (
+    "تخصیص پنل {panel_name} (#{panel_id}) غیرفعال است. با ادمین تماس بگیرید."
+)
 RESELLER_PANEL_NOT_LOADED = (
     "اتصال به پنل {panel_name} (#{panel_id}) برقرار نیست. "
     "با ادمین تماس بگیرید یا چند لحظه بعد دوباره تلاش کنید."
@@ -55,6 +61,7 @@ SERVICE_PANEL_UNAVAILABLE = (
 NO_ACCESSIBLE_SERVICES = (
     "سرویس فعالی روی پنل‌های در دسترس ندارید. با ادمین تماس بگیرید."
 )
+SERVICE_LIST_HEADER = "سرویس‌های شما ({start}–{end} از {total}):"
 
 PANEL_LIST_HEADER = "پنل‌های 3x-ui:"
 PANEL_LIST_EMPTY = "پنلی ثبت نشده است."
@@ -89,6 +96,10 @@ PANEL_SET_FOR_RESELLER = (
     "پنل ریسلر {label} به {panel_name} (#{panel_id}) تغییر کرد."
 )
 PANEL_SET_UNCHANGED = "پنل ریسلر {label} از قبل روی {panel_name} (#{panel_id}) است."
+PANEL_SET_NOT_ASSIGNED = (
+    "پنل #{panel_id} به این ریسلر اختصاص داده نشده. "
+    "ابتدا از «مدیریت پنل‌ها» تخصیص دهید."
+)
 PANEL_SET_BLOCKED_HAS_CLIENTS = (
     "ریسلر {label} الان {client_count} سرویس دارد.\n"
     "برای تغییر پنل ابتدا همه سرویس‌ها را حذف کنید."
@@ -142,14 +153,15 @@ REPORT_HUB_EMPTY = "ریسلری برای گزارش وجود ندارد."
 REPORT_HUB_HINT = "روی هر ریسلر بزنید تا گزارش تعداد سرویس و تخصیص حجم نمایش داده شود."
 RESELLER_REPORT = (
     "📈 گزارش ریسلر: {label}\n"
-    "پنل: {panel_name} (#{panel_id})\n"
-    "وضعیت: {status}\n\n"
-    "تعداد سرویس: {client_count} (حداکثر: {max_clients_line})\n"
-    "سقف حجم: {quota_gb} GB\n"
-    "تخصیص فعال: {active_gb} GB\n"
-    "مصرف سهمیه: {lifetime_gb} GB ({used_percent})\n"
-    "{progress_bar}\n"
-    "باقی‌مانده: {remaining_gb} GB"
+    "وضعیت: {status}\n"
+    "پنل پیش‌فرض: {panel_name} (#{panel_id})\n"
+    "{panels_detail}\n"
+    "سرویس کل: {client_count}"
+)
+RESELLER_REPORT_PANEL_LINE = (
+    "• {panel_name}: {client_count} سرویس | "
+    "{lifetime_gb}/{quota_gb} GB ({used_percent})\n"
+    "{progress_bar}"
 )
 REPORT_UPDATED = "گزارش بروزرسانی شد."
 RESELLER_HUB_HINT = (
@@ -158,13 +170,59 @@ RESELLER_HUB_HINT = (
 RESELLER_VIEW_DETAIL = (
     "ریسلر: {label}\n"
     "وضعیت: {status}\n"
+    "پنل پیش‌فرض: {panel_name} (#{panel_id})\n"
+    "{panels_summary}\n"
+    "سرویس کل: {client_count}"
+)
+RESELLER_PANELS_HEADER = "پنل‌های {label}:"
+RESELLER_PANEL_VIEW = (
+    "ریسلر: {label}\n"
     "پنل: {panel_name} (#{panel_id})\n"
-    "سقف: {quota_gb} GB\n"
-    "تخصیص فعال: {active_gb} GB | مصرف سهمیه: {lifetime_gb} GB\n"
-    "باقی: {remaining_gb} GB\n"
-    "سرویس: {client_count} | حداکثر سرویس: {max_clients_line}\n"
+    "وضعیت تخصیص: {status}\n"
+    "سقف: {quota_gb} GB | باقی: {remaining_gb} GB\n"
+    "تخصیص فعال: {active_gb} GB | مصرف: {lifetime_gb} GB\n"
+    "سرویس: {client_count} | حداکثر: {max_clients}\n"
     "مجاز: {allowed_inbounds}\n"
-    "متصل هنگام ساخت: {attach_inbounds}"
+    "متصل: {attach_inbounds}"
+)
+RESELLER_PANEL_EDIT_MENU = "ویرایش {panel_name} — {label}:"
+RESELLER_PANEL_ADD_PICK = "پنل جدید برای این ریسلر انتخاب کنید:"
+RESELLER_PANEL_ADD_QUOTA = "سقف حجم (GB) برای این پنل:"
+PANEL_ASSIGNMENT_ADDED = (
+    "پنل {panel_name} به {label} اضافه شد.\nسقف: {quota_gb} GB"
+)
+PANEL_ASSIGNMENT_REMOVED = "تخصیص پنل {panel_name} از {label} حذف شد."
+PANEL_CREATE_ALLOWED = "ساخت کلاینت روی {panel_name} — {label} مجاز شد."
+PANEL_CREATE_BLOCKED = (
+    "ساخت کلاینت جدید روی {panel_name} — {label} ممنوع شد. "
+    "سرویس‌های قبلی قابل مدیریت‌اند."
+)
+PANEL_REMOVE_CONFIRM = "حذف این تخصیص پنل؟ (فقط بدون سرویس)"
+PANEL_QUOTA_UPDATED = "سقف {panel_name} — {label}: {quota_gb} GB"
+PANEL_QUOTA_ADDED = (
+    "سقف {panel_name} — {label}: +{add_gb} GB (جدید: {quota_gb} GB)"
+)
+PANEL_QUOTA_USAGE_RESET = (
+    "مصرف {panel_name} — {label} ریست شد.\n"
+    "مصرف: {lifetime_gb} GB | باقی: {remaining_gb} GB"
+)
+PANEL_ALLOWED_INBOUNDS_UPDATED = (
+    "اینباندهای مجاز {panel_name} — {label}:\n{allowed_inbounds}\nمتصل: {attach_inbounds}{warning}"
+)
+PANEL_ATTACH_INBOUNDS_UPDATED = (
+    "اینباندهای متصل {panel_name} — {label}: {attach_inbounds}"
+)
+PANEL_MAX_CLIENTS_UPDATED = (
+    "سقف سرویس {panel_name} — {label}: {max_clients}{warning}"
+)
+DEFAULT_PANEL_SET = "پنل پیش‌فرض {label}: {panel_name}"
+NO_PANEL_AVAILABLE = "پنل جدیدی برای اختصاص وجود ندارد."
+PANEL_NOT_LOADED = "اتصال به پنل برقرار نیست."
+CREATE_PICK_PANEL = "پنل را برای ساخت سرویس انتخاب کنید:"
+WELCOME_RESELLER_MULTI = (
+    "سلام{display_name}!\n\n"
+    "{panels_lines}\n"
+    "سرویس کل: {client_count}"
 )
 RESELLER_EDIT_MENU = "ویرایش ریسلر {label} — گزینه را انتخاب کنید:"
 RESELLER_EDIT_QUOTA_PROMPT = (
@@ -318,6 +376,11 @@ QR_CAPTION = "{remark_line}اسکن در کلاینت VPN"
 USAGE_ALERT_RESELLER = (
     "اعلان\n\n"
     "{threshold}٪ سقف حجم ریسلر شما مصرف شده.\n"
+    "مصرف سهمیه: {used_gb} از {quota_gb} GB ({percent}٪)"
+)
+USAGE_ALERT_RESELLER_PANEL = (
+    "اعلان\n\n"
+    "{threshold}٪ سقف حجم پنل {panel_name} مصرف شده.\n"
     "مصرف سهمیه: {used_gb} از {quota_gb} GB ({percent}٪)"
 )
 USAGE_ALERT_CLIENT = (

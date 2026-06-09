@@ -1,8 +1,8 @@
 import json
 from dataclasses import dataclass
 
-from db.models import Reseller
-from db.repository import ResellerRepository
+from db.models import Reseller, ResellerPanel
+from db.repository import ResellerPanelRepository, ResellerRepository
 from xui.client import bytes_to_gb, gb_to_bytes
 
 
@@ -14,6 +14,7 @@ class QuotaStatus:
     remaining_bytes: int
     client_count: int
     max_clients: int | None
+    panel_id: int | None = None
 
     @property
     def used_bytes(self) -> int:
@@ -60,33 +61,59 @@ class QuotaExceeded(Exception):
 
 
 class QuotaService:
-    def __init__(self, repo: ResellerRepository) -> None:
-        self.repo = repo
+    def __init__(
+        self,
+        reseller_repo: ResellerRepository,
+        panel_repo: ResellerPanelRepository | None = None,
+    ) -> None:
+        self.repo = reseller_repo
+        self.panel_repo = panel_repo or ResellerPanelRepository(reseller_repo.session)
 
-    async def status(self, reseller: Reseller) -> QuotaStatus:
-        active = await self.repo.active_bytes(reseller.telegram_id)
-        lifetime = int(reseller.lifetime_allocated_bytes or 0)
-        count = await self.repo.client_count(reseller.telegram_id)
-        remaining = max(0, reseller.quota_bytes - lifetime)
+    async def _get_assignment(
+        self, reseller: Reseller, panel_id: int
+    ) -> ResellerPanel:
+        row = await self.panel_repo.get(reseller.telegram_id, panel_id)
+        if not row:
+            raise QuotaExceeded("این پنل به حساب شما اختصاص داده نشده.")
+        return row
+
+    async def status(
+        self, reseller: Reseller, panel_id: int | None = None
+    ) -> QuotaStatus:
+        pid = panel_id if panel_id is not None else reseller.panel_id
+        assignment = await self._get_assignment(reseller, pid)
+        active = await self.repo.active_bytes_on_panel(
+            reseller.telegram_id, pid
+        )
+        lifetime = int(assignment.lifetime_allocated_bytes or 0)
+        count = await self.repo.client_count_on_panel(
+            reseller.telegram_id, pid
+        )
+        remaining = max(0, assignment.quota_bytes - lifetime)
         return QuotaStatus(
-            quota_bytes=reseller.quota_bytes,
+            quota_bytes=assignment.quota_bytes,
             active_bytes=active,
             lifetime_bytes=lifetime,
             remaining_bytes=remaining,
             client_count=count,
-            max_clients=reseller.max_clients,
+            max_clients=assignment.max_clients,
+            panel_id=pid,
         )
 
     async def validate_create(
         self,
         reseller: Reseller,
+        panel_id: int,
         volume_gb: float,
         inbound_ids: list[int],
     ) -> int:
         if not reseller.is_active:
             raise QuotaExceeded("حساب ریسلر غیرفعال است.")
 
-        allowed = set(json.loads(reseller.allowed_inbound_ids))
+        assignment = await self._get_assignment(reseller, panel_id)
+        if not assignment.is_active:
+            raise QuotaExceeded("ساخت کلاینت جدید روی این پنل ممنوع است.")
+        allowed = set(json.loads(assignment.allowed_inbound_ids))
         for ib in inbound_ids:
             if ib not in allowed:
                 raise QuotaExceeded(f"اینباند {ib} برای شما مجاز نیست.")
@@ -95,9 +122,9 @@ class QuotaService:
         if allocated <= 0:
             raise QuotaExceeded("حجم باید بزرگ‌تر از صفر باشد.")
 
-        st = await self.status(reseller)
+        st = await self.status(reseller, panel_id)
         if st.max_clients is not None and st.client_count >= st.max_clients:
-            raise QuotaExceeded("به سقف تعداد سرویس رسیده‌اید.")
+            raise QuotaExceeded("به سقف تعداد سرویس روی این پنل رسیده‌اید.")
 
         if allocated > st.remaining_bytes:
             raise QuotaExceeded(
@@ -107,16 +134,17 @@ class QuotaService:
         return allocated
 
     async def validate_add_traffic(
-        self, reseller: Reseller, volume_gb: float
+        self, reseller: Reseller, panel_id: int, volume_gb: float
     ) -> int:
         if not reseller.is_active:
             raise QuotaExceeded("حساب ریسلر غیرفعال است.")
 
+        await self._get_assignment(reseller, panel_id)
         allocated = gb_to_bytes(volume_gb)
         if allocated <= 0:
             raise QuotaExceeded("حجم باید بزرگ‌تر از صفر باشد.")
 
-        st = await self.status(reseller)
+        st = await self.status(reseller, panel_id)
         if allocated > st.remaining_bytes:
             raise QuotaExceeded(
                 f"حجم درخواستی ({bytes_to_gb(allocated)} GB) بیشتر از باقی‌مانده "

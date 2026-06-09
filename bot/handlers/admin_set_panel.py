@@ -14,7 +14,11 @@ from bot.keyboards.common import (
 )
 from bot.states import SetPanelStates
 from bot.texts import fa as t
-from db.repository import PanelRepository, ResellerRepository
+from db.repository import (
+    PanelRepository,
+    ResellerPanelRepository,
+    ResellerRepository,
+)
 from db.session import get_session_factory
 from services.reseller_labels import reseller_label
 from services.set_panel import (
@@ -37,21 +41,17 @@ async def _begin_set_panel_for_reseller(
         if not reseller:
             await message.edit_text("ریسلر یافت نشد.")
             return
-        client_count = await reseller_repo.client_count(tg_id)
+        assignments = await ResellerPanelRepository(session).list_for_reseller(
+            tg_id
+        )
         current_panel = await panel_repo.get(reseller.panel_id)
         current_name = current_panel.name if current_panel else f"#{reseller.panel_id}"
 
-        if client_count > 0:
-            await message.edit_text(
-                t.PANEL_SET_BLOCKED_HAS_CLIENTS.format(
-                    label=reseller_label(reseller),
-                    client_count=client_count,
-                )
-            )
-            await state.clear()
-            return
-
-        panels = await panel_repo.list_active()
+        panels = []
+        for a in assignments:
+            p = await panel_repo.get(a.panel_id)
+            if p and p.is_active:
+                panels.append(p)
         if not panels:
             await message.edit_text(t.PANEL_SET_NO_PANELS)
             await state.clear()
@@ -61,7 +61,6 @@ async def _begin_set_panel_for_reseller(
         reseller_tg_id=tg_id,
         old_panel_id=reseller.panel_id,
         old_panel_name=current_name,
-        client_count=client_count,
         label=reseller_label(reseller),
     )
     await state.set_state(SetPanelStates.pick_panel)
@@ -70,7 +69,7 @@ async def _begin_set_panel_for_reseller(
             label=reseller_label(reseller),
             current_panel_name=current_name,
             current_panel_id=reseller.panel_id,
-            client_count=client_count,
+            client_count=len(assignments),
         ),
         reply_markup=set_panel_pick_panel_kb(panels),
     )
@@ -141,15 +140,10 @@ async def set_panel_entry(message: Message, state: FSMContext) -> None:
             except ResellerNotFoundError:
                 await message.answer("ریسلر یافت نشد.")
                 return
-            except SetPanelBlockedError as e:
-                reseller = await ResellerRepository(session).get(tg_id)
-                if reseller:
-                    await message.answer(
-                        t.PANEL_SET_BLOCKED_HAS_CLIENTS.format(
-                            label=reseller_label(reseller),
-                            client_count=e.client_count,
-                        )
-                    )
+            except SetPanelBlockedError:
+                await message.answer(
+                    t.PANEL_SET_NOT_ASSIGNED.format(panel_id=panel_id)
+                )
                 return
             text = await _format_set_panel_success(
                 session, tg_id, panel_id, result.unchanged
@@ -255,12 +249,9 @@ async def set_panel_save(callback: CallbackQuery, state: FSMContext) -> None:
         except ResellerNotFoundError:
             await callback.answer("ریسلر یافت نشد.", show_alert=True)
             return
-        except SetPanelBlockedError as e:
+        except SetPanelBlockedError:
             await callback.answer(
-                t.PANEL_SET_BLOCKED_HAS_CLIENTS.format(
-                    label=data.get("label", ""),
-                    client_count=e.client_count,
-                ),
+                t.PANEL_SET_NOT_ASSIGNED.format(panel_id=panel_id),
                 show_alert=True,
             )
             return

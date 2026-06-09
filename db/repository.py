@@ -5,7 +5,14 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.utils.panel_url import normalize_http_url, normalize_sub_public_url
-from db.models import ClientRecord, Panel, Reseller, ServiceTemplate, UsageAlertSent
+from db.models import (
+    ClientRecord,
+    Panel,
+    Reseller,
+    ResellerPanel,
+    ServiceTemplate,
+    UsageAlertSent,
+)
 
 _MAX_TEMPLATE_NAME_LEN = 64
 
@@ -50,6 +57,23 @@ def resolve_attach_inbound_ids(reseller: Reseller) -> list[int]:
     if attach:
         return attach
     return inbound_ids_from_json(reseller.allowed_inbound_ids)
+
+
+def resolve_attach_inbound_ids_for_assignment(assignment: ResellerPanel) -> list[int]:
+    attach = inbound_ids_from_json(assignment.attach_inbound_ids)
+    if attach:
+        return attach
+    return inbound_ids_from_json(assignment.allowed_inbound_ids)
+
+
+def format_inbound_summary_for_assignment(assignment: ResellerPanel) -> str:
+    allowed = inbound_ids_from_json(assignment.allowed_inbound_ids)
+    attach = resolve_attach_inbound_ids_for_assignment(assignment)
+    attach_s = ", ".join(str(i) for i in attach)
+    if sorted(attach) == sorted(allowed):
+        return f"اینباندهای متصل: {attach_s}"
+    allowed_s = ", ".join(str(i) for i in allowed)
+    return f"اینباندهای متصل: {attach_s}\nاینباندهای مجاز: {allowed_s}"
 
 
 def validate_inbound_subset(allowed: list[int], attach: list[int]) -> None:
@@ -160,7 +184,29 @@ class ResellerRepository:
             self.session.add(row)
         await self.session.commit()
         await self.session.refresh(row)
+        await self._sync_primary_panel_assignment(row)
         return row
+
+    async def _sync_primary_panel_assignment(self, row: Reseller) -> None:
+        panel_repo = ResellerPanelRepository(self.session)
+        assignment = await panel_repo.get(row.telegram_id, row.panel_id)
+        if assignment is None:
+            await panel_repo.add(
+                row.telegram_id,
+                row.panel_id,
+                row.quota_bytes,
+                inbound_ids_from_json(row.allowed_inbound_ids),
+                attach_inbound_ids=inbound_ids_from_json(row.attach_inbound_ids),
+                max_clients=row.max_clients,
+                is_active=True,
+            )
+        else:
+            assignment.quota_bytes = row.quota_bytes
+            assignment.lifetime_allocated_bytes = row.lifetime_allocated_bytes
+            assignment.allowed_inbound_ids = row.allowed_inbound_ids
+            assignment.attach_inbound_ids = row.attach_inbound_ids
+            assignment.max_clients = row.max_clients
+            await self.session.commit()
 
     async def set_allowed_inbound_ids(
         self, telegram_id: int, allowed: list[int]
@@ -177,6 +223,7 @@ class ResellerRepository:
         was_trimmed = set(old_attach) != set(allowed)
         await self.session.commit()
         await self.session.refresh(row)
+        await self._sync_primary_panel_assignment(row)
         return row, was_trimmed
 
     async def set_attach_inbound_ids(
@@ -190,6 +237,7 @@ class ResellerRepository:
         row.attach_inbound_ids = inbound_ids_to_json(attach)
         await self.session.commit()
         await self.session.refresh(row)
+        await self._sync_primary_panel_assignment(row)
         return row
 
     async def set_display_name(
@@ -232,6 +280,7 @@ class ResellerRepository:
         row.max_clients = max_clients
         await self.session.commit()
         await self.session.refresh(row)
+        await self._sync_primary_panel_assignment(row)
         return row
 
     async def active_bytes(self, telegram_id: int) -> int:
@@ -253,6 +302,7 @@ class ResellerRepository:
         row.lifetime_allocated_bytes += delta
         await self.session.commit()
         await self.session.refresh(row)
+        await self._sync_primary_panel_assignment(row)
 
     async def subtract_lifetime_allocated(
         self, telegram_id: int, delta: int
@@ -265,6 +315,7 @@ class ResellerRepository:
         )
         await self.session.commit()
         await self.session.refresh(row)
+        await self._sync_primary_panel_assignment(row)
 
     async def reset_lifetime_to_active(self, telegram_id: int) -> Reseller | None:
         row = await self.get(telegram_id)
@@ -273,6 +324,7 @@ class ResellerRepository:
         row.lifetime_allocated_bytes = await self.active_bytes(telegram_id)
         await self.session.commit()
         await self.session.refresh(row)
+        await self._sync_primary_panel_assignment(row)
         return row
 
     async def add_quota_bytes(self, telegram_id: int, delta: int) -> Reseller | None:
@@ -282,12 +334,37 @@ class ResellerRepository:
         row.quota_bytes += delta
         await self.session.commit()
         await self.session.refresh(row)
+        await self._sync_primary_panel_assignment(row)
         return row
 
     async def client_count(self, telegram_id: int) -> int:
         result = await self.session.scalar(
             select(func.count()).select_from(ClientRecord).where(
                 ClientRecord.reseller_tg_id == telegram_id
+            )
+        )
+        return int(result or 0)
+
+    async def client_count_on_panel(
+        self, telegram_id: int, panel_id: int
+    ) -> int:
+        result = await self.session.scalar(
+            select(func.count())
+            .select_from(ClientRecord)
+            .where(
+                ClientRecord.reseller_tg_id == telegram_id,
+                ClientRecord.panel_id == panel_id,
+            )
+        )
+        return int(result or 0)
+
+    async def active_bytes_on_panel(
+        self, telegram_id: int, panel_id: int
+    ) -> int:
+        result = await self.session.scalar(
+            select(func.coalesce(func.sum(ClientRecord.allocated_bytes), 0)).where(
+                ClientRecord.reseller_tg_id == telegram_id,
+                ClientRecord.panel_id == panel_id,
             )
         )
         return int(result or 0)
@@ -309,6 +386,214 @@ class ResellerRepository:
         await self.session.delete(row)
         await self.session.commit()
         return True
+
+    async def sync_legacy_from_primary_panel(
+        self, telegram_id: int, panel_repo: "ResellerPanelRepository"
+    ) -> None:
+        """Keep resellers.* in sync with default panel assignment (compat)."""
+        row = await self.get(telegram_id)
+        if not row:
+            return
+        primary = await panel_repo.get(telegram_id, row.panel_id)
+        if not primary:
+            return
+        row.quota_bytes = primary.quota_bytes
+        row.lifetime_allocated_bytes = primary.lifetime_allocated_bytes
+        row.allowed_inbound_ids = primary.allowed_inbound_ids
+        row.attach_inbound_ids = primary.attach_inbound_ids
+        row.max_clients = primary.max_clients
+        await self.session.commit()
+        await self.session.refresh(row)
+
+
+class ResellerPanelRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def get(
+        self, reseller_tg_id: int, panel_id: int
+    ) -> ResellerPanel | None:
+        return await self.session.get(
+            ResellerPanel, (reseller_tg_id, panel_id)
+        )
+
+    async def list_for_reseller(
+        self, reseller_tg_id: int, *, active_only: bool = False
+    ) -> list[ResellerPanel]:
+        q = select(ResellerPanel).where(
+            ResellerPanel.reseller_tg_id == reseller_tg_id
+        )
+        if active_only:
+            q = q.where(ResellerPanel.is_active.is_(True))
+        result = await self.session.scalars(
+            q.order_by(ResellerPanel.panel_id)
+        )
+        return list(result.all())
+
+    async def list_active_panel_ids(self, reseller_tg_id: int) -> list[int]:
+        rows = await self.list_for_reseller(reseller_tg_id, active_only=True)
+        return [r.panel_id for r in rows]
+
+    async def add(
+        self,
+        reseller_tg_id: int,
+        panel_id: int,
+        quota_bytes: int,
+        allowed_inbound_ids: list[int],
+        *,
+        attach_inbound_ids: list[int] | None = None,
+        max_clients: int | None = None,
+        is_active: bool = True,
+    ) -> ResellerPanel:
+        existing = await self.get(reseller_tg_id, panel_id)
+        if existing:
+            raise ValueError("این پنل قبلاً به ریسلر اختصاص داده شده.")
+        if not allowed_inbound_ids:
+            raise ValueError("لیست اینباندهای مجاز نمی‌تواند خالی باشد.")
+        attach = attach_inbound_ids if attach_inbound_ids else allowed_inbound_ids
+        validate_inbound_subset(allowed_inbound_ids, attach)
+        row = ResellerPanel(
+            reseller_tg_id=reseller_tg_id,
+            panel_id=panel_id,
+            quota_bytes=quota_bytes,
+            lifetime_allocated_bytes=0,
+            allowed_inbound_ids=inbound_ids_to_json(allowed_inbound_ids),
+            attach_inbound_ids=inbound_ids_to_json(attach),
+            max_clients=max_clients,
+            is_active=is_active,
+        )
+        self.session.add(row)
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def set_quota_bytes(
+        self, reseller_tg_id: int, panel_id: int, quota_bytes: int
+    ) -> ResellerPanel | None:
+        row = await self.get(reseller_tg_id, panel_id)
+        if not row:
+            return None
+        row.quota_bytes = quota_bytes
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def add_quota_bytes(
+        self, reseller_tg_id: int, panel_id: int, delta: int
+    ) -> ResellerPanel | None:
+        row = await self.get(reseller_tg_id, panel_id)
+        if not row:
+            return None
+        row.quota_bytes += delta
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def add_lifetime_allocated(
+        self, reseller_tg_id: int, panel_id: int, delta: int
+    ) -> None:
+        row = await self.get(reseller_tg_id, panel_id)
+        if not row:
+            raise ValueError("تخصیص پنل یافت نشد.")
+        row.lifetime_allocated_bytes += delta
+        await self.session.commit()
+        await self.session.refresh(row)
+
+    async def subtract_lifetime_allocated(
+        self, reseller_tg_id: int, panel_id: int, delta: int
+    ) -> None:
+        row = await self.get(reseller_tg_id, panel_id)
+        if not row:
+            raise ValueError("تخصیص پنل یافت نشد.")
+        row.lifetime_allocated_bytes = max(
+            0, int(row.lifetime_allocated_bytes or 0) - delta
+        )
+        await self.session.commit()
+        await self.session.refresh(row)
+
+    async def reset_lifetime_to_active(
+        self, reseller_tg_id: int, panel_id: int, active_bytes: int
+    ) -> ResellerPanel | None:
+        row = await self.get(reseller_tg_id, panel_id)
+        if not row:
+            return None
+        row.lifetime_allocated_bytes = active_bytes
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def set_allowed_inbound_ids(
+        self, reseller_tg_id: int, panel_id: int, allowed: list[int]
+    ) -> tuple[ResellerPanel | None, bool]:
+        row = await self.get(reseller_tg_id, panel_id)
+        if not row:
+            return None, False
+        if not allowed:
+            raise ValueError("لیست اینباندهای مجاز نمی‌تواند خالی باشد.")
+        old_attach = resolve_attach_inbound_ids_for_assignment(row)
+        row.allowed_inbound_ids = inbound_ids_to_json(allowed)
+        row.attach_inbound_ids = inbound_ids_to_json(allowed)
+        was_trimmed = set(old_attach) != set(allowed)
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row, was_trimmed
+
+    async def set_attach_inbound_ids(
+        self, reseller_tg_id: int, panel_id: int, attach: list[int]
+    ) -> ResellerPanel | None:
+        row = await self.get(reseller_tg_id, panel_id)
+        if not row:
+            return None
+        allowed = inbound_ids_from_json(row.allowed_inbound_ids)
+        validate_inbound_subset(allowed, attach)
+        row.attach_inbound_ids = inbound_ids_to_json(attach)
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def set_max_clients(
+        self, reseller_tg_id: int, panel_id: int, max_clients: int | None
+    ) -> ResellerPanel | None:
+        row = await self.get(reseller_tg_id, panel_id)
+        if not row:
+            return None
+        row.max_clients = max_clients
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def set_active(
+        self, reseller_tg_id: int, panel_id: int, active: bool
+    ) -> ResellerPanel | None:
+        row = await self.get(reseller_tg_id, panel_id)
+        if not row:
+            return None
+        row.is_active = active
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def delete(self, reseller_tg_id: int, panel_id: int) -> bool:
+        row = await self.get(reseller_tg_id, panel_id)
+        if not row:
+            return False
+        reseller_repo = ResellerRepository(self.session)
+        if await reseller_repo.client_count_on_panel(reseller_tg_id, panel_id) > 0:
+            raise ValueError("ریسلر روی این پنل سرویس دارد؛ حذف تخصیص مجاز نیست.")
+        assignments = await self.list_for_reseller(reseller_tg_id)
+        if len(assignments) <= 1:
+            raise ValueError("حداقل یک پنل باید برای ریسلر باقی بماند.")
+        await self.session.delete(row)
+        await self.session.commit()
+        return True
+
+    async def assignment_count_on_panel(self, panel_id: int) -> int:
+        result = await self.session.scalar(
+            select(func.count())
+            .select_from(ResellerPanel)
+            .where(ResellerPanel.panel_id == panel_id)
+        )
+        return int(result or 0)
 
 
 class ClientRepository:
@@ -560,6 +845,10 @@ class PanelRepository:
         return row
 
     async def reseller_count(self, panel_id: int) -> int:
+        rp = ResellerPanelRepository(self.session)
+        count = await rp.assignment_count_on_panel(panel_id)
+        if count > 0:
+            return count
         result = await self.session.scalar(
             select(func.count())
             .select_from(Reseller)
@@ -570,6 +859,9 @@ class PanelRepository:
     async def delete(self, panel_id: int) -> bool:
         if panel_id == 1:
             raise ValueError("پنل پیش‌فرض قابل حذف نیست.")
+        rp = ResellerPanelRepository(self.session)
+        if await rp.assignment_count_on_panel(panel_id) > 0:
+            raise ValueError("این پنل ریسلر دارد؛ ابتدا تخصیص‌ها را حذف کنید.")
         if await self.reseller_count(panel_id) > 0:
             raise ValueError("این پنل ریسلر دارد؛ ابتدا ریسلرها را منتقل یا حذف کنید.")
         row = await self.get(panel_id)

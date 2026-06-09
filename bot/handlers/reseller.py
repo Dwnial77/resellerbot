@@ -12,11 +12,13 @@ from bot.keyboards.common import (
     client_name_kb,
     confirm_create_kb,
     create_cancel_kb,
+    create_pick_panel_kb,
     delete_confirm_kb,
     expiry_mode_kb,
     reset_traffic_confirm_kb,
     service_detail_kb,
     service_edit_kb,
+    SERVICES_PAGE_SIZE,
     service_list_kb,
     template_picker_kb,
     vless_qr_kb,
@@ -42,13 +44,14 @@ from bot.utils.format_traffic import (
 from db.repository import (
     ClientRepository,
     PanelRepository,
+    ResellerPanelRepository,
     ResellerRepository,
     ServiceTemplateRepository,
-    format_inbound_summary,
-    resolve_attach_inbound_ids,
+    resolve_attach_inbound_ids_for_assignment,
 )
+from bot.utils.reseller_welcome import accessible_panel_ids, format_reseller_welcome
 from db.session import get_session_factory
-from services.quota import QuotaExceeded, QuotaService, format_max_clients_line
+from services.quota import QuotaExceeded, QuotaService
 from services.reseller_labels import (
     InvalidClientSuffixError,
     build_client_email,
@@ -67,15 +70,12 @@ from bot.utils.service_resolve import (
     list_accessible_clients,
     open_service_context,
 )
-from bot.utils.panel_access import (
-    answer_panel_unavailable,
-    ensure_reseller_panel_access,
-)
+from bot.utils.panel_access import answer_panel_unavailable
 from services.panel_resolve import (
     ResellerPanelUnavailableError,
     ServiceNotFoundError,
     ServicePanelUnavailableError,
-    xui_for_reseller,
+    xui_for_reseller_panel,
 )
 from xui.client import XuiClient, XuiError, bytes_to_gb
 
@@ -95,32 +95,76 @@ async def _get_active_reseller(user_id: int):
 async def account_status(message: Message) -> None:
     if not message.from_user:
         return
-    reseller, repo = await _get_active_reseller(message.from_user.id)
+    reseller, _ = await _get_active_reseller(message.from_user.id)
     if not reseller:
         await message.answer(t.NOT_RESELLER)
         return
     async with get_session_factory()() as session:
-        repo = ResellerRepository(session)
-        reseller = await repo.get(message.from_user.id)
-        panel = await PanelRepository(session).get(reseller.panel_id)  # type: ignore[union-attr]
-        panel_name = panel.name if panel else f"#{reseller.panel_id}"  # type: ignore[union-attr]
-        quota = QuotaService(repo)
-        st = await quota.status(reseller)  # type: ignore[arg-type]
-    inbounds_summary = format_inbound_summary(reseller)  # type: ignore[arg-type]
-    display_name = f" {reseller.display_name}" if reseller.display_name else ""  # type: ignore[union-attr]
-    await message.answer(
-        t.WELCOME_RESELLER.format(
-            display_name=display_name,
-            panel_id=reseller.panel_id,  # type: ignore[union-attr]
-            panel_name=panel_name,
-            quota_gb=st.quota_gb,
-            active_gb=st.active_gb,
-            lifetime_gb=st.lifetime_gb,
-            remaining_gb=st.remaining_gb,
-            client_count=st.client_count,
-            max_clients_line=format_max_clients_line(st),
-            inbounds_summary=inbounds_summary,
+        reseller = await ResellerRepository(session).get(message.from_user.id)
+        if not reseller:
+            await message.answer(t.NOT_RESELLER)
+            return
+        welcome = await format_reseller_welcome(session, reseller)
+    await message.answer(welcome)
+
+
+async def _create_panel_options(
+    session, reseller, panel_registry: PanelRegistry
+) -> list[tuple[int, str, float]]:
+    panel_repo = PanelRepository(session)
+    quota_svc = QuotaService(
+        ResellerRepository(session), ResellerPanelRepository(session)
+    )
+    out: list[tuple[int, str, float]] = []
+    for panel_id in await accessible_panel_ids(panel_registry, session, reseller):
+        panel = await panel_repo.get(panel_id)
+        name = panel.name if panel else f"#{panel_id}"
+        st = await quota_svc.status(reseller, panel_id)
+        out.append((panel_id, name, st.remaining_gb))
+    return out
+
+
+async def _continue_create_flow(
+    target: Message,
+    state: FSMContext,
+    *,
+    panel_id: int,
+    has_templates: bool,
+) -> None:
+    await state.update_data(panel_id=panel_id)
+    if has_templates:
+        async with get_session_factory()() as session:
+            templates = await ServiceTemplateRepository(session).list_active()
+        await target.answer(
+            t.CREATE_PICK_TEMPLATE,
+            reply_markup=template_picker_kb(templates),
         )
+        return
+    await state.set_state(CreateServiceStates.volume)
+    await target.answer(t.CREATE_VOLUME_PROMPT, reply_markup=create_cancel_kb())
+
+
+async def _prompt_pick_panel_or_continue(
+    target: Message,
+    state: FSMContext,
+    reseller,
+    panel_registry: PanelRegistry,
+) -> None:
+    async with get_session_factory()() as session:
+        options = await _create_panel_options(session, reseller, panel_registry)
+        templates = await ServiceTemplateRepository(session).list_active()
+    if not options:
+        await target.answer(t.NO_PANEL_ACCESS)
+        return
+    if len(options) == 1:
+        await _continue_create_flow(
+            target, state, panel_id=options[0][0], has_templates=bool(templates)
+        )
+        return
+    await state.set_state(CreateServiceStates.pick_panel)
+    await target.answer(
+        t.CREATE_PICK_PANEL,
+        reply_markup=create_pick_panel_kb(options),
     )
 
 
@@ -144,21 +188,8 @@ async def start_create(
     if not reseller:
         await message.answer(t.NOT_RESELLER)
         return
-    if not await ensure_reseller_panel_access(message, panel_registry, reseller):
-        return
     await state.clear()
-    async with get_session_factory()() as session:
-        templates = await ServiceTemplateRepository(session).list_active()
-    if templates:
-        await message.answer(
-            t.CREATE_PICK_TEMPLATE,
-            reply_markup=template_picker_kb(templates),
-        )
-        return
-    await state.set_state(CreateServiceStates.volume)
-    await message.answer(
-        t.CREATE_VOLUME_PROMPT, reply_markup=create_cancel_kb()
-    )
+    await _prompt_pick_panel_or_continue(message, state, reseller, panel_registry)
 
 
 @router.callback_query(F.data == "create:manual")
@@ -171,14 +202,46 @@ async def create_manual(
     if not reseller:
         await callback.answer(t.NOT_RESELLER, show_alert=True)
         return
-    if not await ensure_reseller_panel_access(callback, panel_registry, reseller):
-        return
     await state.clear()
-    await state.set_state(CreateServiceStates.volume)
     if callback.message:
-        await callback.message.answer(  # type: ignore[union-attr]
-            t.CREATE_VOLUME_PROMPT, reply_markup=create_cancel_kb()
+        await _prompt_pick_panel_or_continue(
+            callback.message, state, reseller, panel_registry  # type: ignore[arg-type]
         )
+    await callback.answer()
+
+
+@router.callback_query(CreateServiceStates.pick_panel, F.data.startswith("create:panel:"))
+async def create_pick_panel(
+    callback: CallbackQuery, state: FSMContext, panel_registry: PanelRegistry
+) -> None:
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    try:
+        panel_id = int((callback.data or "").split(":", 2)[2])
+    except (ValueError, IndexError):
+        await callback.answer(t.INVALID_INPUT, show_alert=True)
+        return
+    reseller, _ = await _get_active_reseller(callback.from_user.id)
+    if not reseller:
+        await callback.answer(t.NOT_RESELLER, show_alert=True)
+        return
+    async with get_session_factory()() as session:
+        accessible = await accessible_panel_ids(panel_registry, session, reseller)
+        if panel_id not in accessible:
+            await callback.answer(t.NO_PANEL_ACCESS, show_alert=True)
+            return
+        templates = await ServiceTemplateRepository(session).list_active()
+    await _continue_create_flow(
+        callback.message,  # type: ignore[arg-type]
+        state,
+        panel_id=panel_id,
+        has_templates=bool(templates),
+    )
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)  # type: ignore[union-attr]
+    except Exception:
+        pass
     await callback.answer()
 
 
@@ -192,8 +255,8 @@ async def create_from_template(
     if not reseller:
         await callback.answer(t.NOT_RESELLER, show_alert=True)
         return
-    if not await ensure_reseller_panel_access(callback, panel_registry, reseller):
-        return
+    data = await state.get_data()
+    panel_id = data.get("panel_id")
     try:
         template_id = int((callback.data or "").split(":", 1)[1])
     except (ValueError, IndexError):
@@ -206,8 +269,16 @@ async def create_from_template(
         await callback.answer(t.TEMPLATE_NOT_FOUND, show_alert=True)
         return
 
-    await state.clear()
+    if panel_id is None:
+        await state.clear()
+        if callback.message:
+            await _prompt_pick_panel_or_continue(
+                callback.message, state, reseller, panel_registry  # type: ignore[arg-type]
+            )
+        await callback.answer()
+        return
     await state.update_data(
+        panel_id=int(panel_id),
         volume_gb=tpl.volume_gb,
         expiry_days=tpl.expiry_days,
         template_name=tpl.name,
@@ -277,15 +348,26 @@ async def _show_create_confirm(
         await message.answer(str(e))
         return False
 
+    panel_id = data.get("panel_id")
+    if panel_id is None:
+        await message.answer(t.INVALID_INPUT)
+        return False
+
     async with get_session_factory()() as session:
+        assignment = await ResellerPanelRepository(session).get(
+            reseller.telegram_id, int(panel_id)
+        )
+        if not assignment:
+            await message.answer(t.NO_PANEL_ACCESS)
+            return False
         if await ClientRepository(session).email_exists(
-            email_preview, panel_id=reseller.panel_id
+            email_preview, panel_id=int(panel_id)
         ):
             await message.answer(t.EMAIL_TAKEN)
             await state.set_state(CreateServiceStates.client_name)
             return False
 
-    inbounds = resolve_attach_inbound_ids(reseller)
+    inbounds = resolve_attach_inbound_ids_for_assignment(assignment)
     template_name = data.get("template_name")
     template_line = f"قالب: {template_name}\n" if template_name else ""
     await state.update_data(email_preview=email_preview)
@@ -378,7 +460,8 @@ async def confirm_create(
     volume_gb = data.get("volume_gb")
     expiry_days = data.get("expiry_days", 0)
     client_suffix = data.get("client_suffix")
-    if volume_gb is None or not client_suffix:
+    panel_id = data.get("panel_id")
+    if volume_gb is None or not client_suffix or panel_id is None:
         await state.clear()
         await callback.answer(
             "اطلاعات ساخت ناقص یا منقضی شده. دوباره از «ساخت سرویس» شروع کنید.",
@@ -397,16 +480,14 @@ async def confirm_create(
             await callback.answer()
             return
 
-        xui_client = xui
-        if xui_client is None:
-            try:
-                xui_client = await xui_for_reseller(
-                    panel_registry, session, reseller
-                )
-            except ResellerPanelUnavailableError as e:
-                await state.update_data(create_locked=False)
-                await answer_panel_unavailable(callback, e)
-                return
+        try:
+            xui_client = xui or await xui_for_reseller_panel(
+                panel_registry, session, reseller, int(panel_id)
+            )
+        except ResellerPanelUnavailableError as e:
+            await state.update_data(create_locked=False)
+            await answer_panel_unavailable(callback, e)
+            return
 
         svc = ResellerService(session, xui_client)
         try:
@@ -415,6 +496,7 @@ async def confirm_create(
                 volume_gb=volume_gb,
                 expiry_days=expiry_days,
                 client_suffix=client_suffix,
+                panel_id=int(panel_id),
             )
         except QuotaExceeded as e:
             await state.update_data(create_locked=False)
@@ -463,6 +545,28 @@ async def _accessible_service_emails(
     return [c.email for c in clients]
 
 
+def _format_service_list_text(total: int, page: int) -> str:
+    start = page * SERVICES_PAGE_SIZE + 1
+    end = min((page + 1) * SERVICES_PAGE_SIZE, total)
+    header = t.SERVICE_LIST_HEADER.format(start=start, end=end, total=total)
+    return f"{header}\nیکی را انتخاب کنید:"
+
+
+async def _show_service_list(
+    message: Message,
+    emails: list[str],
+    page: int = 0,
+    *,
+    edit: bool = False,
+) -> None:
+    text = _format_service_list_text(len(emails), page)
+    markup = service_list_kb(emails, page=page)
+    if edit:
+        await message.edit_text(text, reply_markup=markup)
+    else:
+        await message.answer(text, reply_markup=markup)
+
+
 @router.message(F.text == btn.MY_SERVICES)
 async def my_services(message: Message, panel_registry: PanelRegistry) -> None:
     if not message.from_user:
@@ -480,17 +584,15 @@ async def my_services(message: Message, panel_registry: PanelRegistry) -> None:
     if not emails:
         await message.answer(t.NO_ACCESSIBLE_SERVICES)
         return
-    await message.answer(
-        "سرویس‌های شما — یکی را انتخاب کنید:",
-        reply_markup=service_list_kb(emails),
-    )
+    await _show_service_list(message, emails, page=0)
 
 
 @router.callback_query(F.data == "svc:back")
 async def services_back(
     callback: CallbackQuery, panel_registry: PanelRegistry
 ) -> None:
-    if not callback.from_user:
+    if not callback.from_user or not callback.message:
+        await callback.answer()
         return
     async with get_session_factory()() as session:
         emails = await _accessible_service_emails(
@@ -499,10 +601,35 @@ async def services_back(
     if not emails:
         await callback.message.edit_text(t.NO_ACCESSIBLE_SERVICES)  # type: ignore[union-attr]
     else:
-        await callback.message.edit_text(  # type: ignore[union-attr]
-            "سرویس‌های شما:",
-            reply_markup=service_list_kb(emails),
+        await _show_service_list(
+            callback.message, emails, page=0, edit=True  # type: ignore[arg-type]
         )
+    await callback.answer()
+
+
+@router.callback_query(F.data.regexp(r"^svc:pg:\d+$"))
+async def services_page(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    try:
+        page = int((callback.data or "").split(":", 2)[2])
+    except (ValueError, IndexError):
+        await callback.answer(t.INVALID_INPUT, show_alert=True)
+        return
+    async with get_session_factory()() as session:
+        emails = await _accessible_service_emails(
+            session, panel_registry, callback.from_user.id
+        )
+    if not emails:
+        await callback.message.edit_text(t.NO_ACCESSIBLE_SERVICES)  # type: ignore[union-attr]
+        await callback.answer()
+        return
+    await _show_service_list(
+        callback.message, emails, page=page, edit=True  # type: ignore[arg-type]
+    )
     await callback.answer()
 
 
@@ -558,7 +685,7 @@ async def service_detail(
     callback: CallbackQuery, panel_registry: PanelRegistry
 ) -> None:
     email = (callback.data or "").split(":", 1)[1]
-    if email == "back":
+    if email == "back" or email.startswith("pg:"):
         return
     if not callback.from_user or not callback.message:
         await callback.answer()
@@ -695,8 +822,10 @@ async def _show_add_traffic_confirm(
         async with open_service_context(
             panel_registry, user_id, email
         ) as (ctx, session):
-            quota = QuotaService(ResellerRepository(session))
-            st = await quota.status(ctx.reseller)
+            quota = QuotaService(
+                ResellerRepository(session), ResellerPanelRepository(session)
+            )
+            st = await quota.status(ctx.reseller, ctx.record.panel_id)
             current_gb = bytes_to_gb(ctx.record.allocated_bytes)
             remaining_before = st.remaining_gb
             if volume_gb > remaining_before:
@@ -745,8 +874,10 @@ async def add_traffic_menu(
         async with open_service_context(
             panel_registry, callback.from_user.id, email
         ) as (ctx, session):
-            quota = QuotaService(ResellerRepository(session))
-            st = await quota.status(ctx.reseller)
+            quota = QuotaService(
+                ResellerRepository(session), ResellerPanelRepository(session)
+            )
+            st = await quota.status(ctx.reseller, ctx.record.panel_id)
             current_gb = bytes_to_gb(ctx.record.allocated_bytes)
             text = t.ADD_TRAFFIC_CHOOSE.format(
                 email=email,

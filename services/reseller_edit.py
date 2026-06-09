@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.texts import fa as t
 from db.models import Reseller
-from db.repository import ResellerRepository, resolve_attach_inbound_ids
+from db.repository import ResellerPanelRepository, ResellerRepository, resolve_attach_inbound_ids
 from services.quota import QuotaService
 from services.reseller_labels import reseller_label
 from xui.client import bytes_to_gb, gb_to_bytes
@@ -70,7 +70,7 @@ async def apply_reset_quota_usage(
         raise ResellerNotFoundError()
     row = await repo.reset_lifetime_to_active(telegram_id)
     assert row is not None
-    st = await QuotaService(repo).status(row)
+    st = await QuotaService(repo, ResellerPanelRepository(session)).status(row)
     return EditResult(
         reseller=row,
         message_text=t.QUOTA_USAGE_RESET.format(
@@ -101,7 +101,7 @@ async def apply_max_clients(
     row = await repo.get(telegram_id)
     if not row:
         raise ResellerNotFoundError()
-    quota_svc = QuotaService(repo)
+    quota_svc = QuotaService(repo, ResellerPanelRepository(session))
     st = await quota_svc.status(row)
     row = await repo.set_max_clients(telegram_id, max_clients)
     assert row is not None

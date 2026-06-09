@@ -5,9 +5,9 @@ from aiogram.types import Message
 from bot.config import get_settings
 from bot.keyboards.common import admin_main_kb, reseller_main_kb
 from bot.texts import fa as t
-from db.repository import PanelRepository, ResellerRepository, format_inbound_summary
+from db.repository import ResellerRepository
 from db.session import get_session_factory
-from services.quota import QuotaService, format_max_clients_line
+from bot.utils.reseller_welcome import format_reseller_welcome
 
 router = Router()
 
@@ -25,27 +25,8 @@ async def cmd_start(message: Message) -> None:
         if not reseller or not reseller.is_active:
             await message.answer(t.NOT_RESELLER)
             return
-        panel = await PanelRepository(session).get(reseller.panel_id)
-        panel_name = panel.name if panel else f"#{reseller.panel_id}"
-        quota = QuotaService(repo)
-        st = await quota.status(reseller)
-        inbounds_summary = format_inbound_summary(reseller)
-    display_name = f" {reseller.display_name}" if reseller.display_name else ""
-    await message.answer(
-        t.WELCOME_RESELLER.format(
-            display_name=display_name,
-            panel_id=reseller.panel_id,
-            panel_name=panel_name,
-            quota_gb=st.quota_gb,
-            active_gb=st.active_gb,
-            lifetime_gb=st.lifetime_gb,
-            remaining_gb=st.remaining_gb,
-            client_count=st.client_count,
-            max_clients_line=format_max_clients_line(st),
-            inbounds_summary=inbounds_summary,
-        ),
-        reply_markup=reseller_main_kb(),
-    )
+        welcome = await format_reseller_welcome(session, reseller)
+    await message.answer(welcome, reply_markup=reseller_main_kb())
 
 
 @router.message(Command("admin"))

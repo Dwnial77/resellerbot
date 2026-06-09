@@ -6,6 +6,7 @@ from db.models import Panel, Reseller, ServiceTemplate
 from xui.client import VlessConfig
 
 _TELEGRAM_CALLBACK_MAX = 64
+SERVICES_PAGE_SIZE = 8
 
 
 def reseller_main_kb() -> ReplyKeyboardMarkup:
@@ -307,6 +308,12 @@ def reseller_view_kb(
         ],
         [
             InlineKeyboardButton(
+                text=L.MANAGE_PANELS,
+                callback_data=f"rsl:panels:{telegram_id}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
                 text=L.EDIT_RESELLER,
                 callback_data=f"rsl:edit:{telegram_id}",
             ),
@@ -432,18 +439,202 @@ def _inbound_toggle_rows(
 
 
 def reseller_wizard_inbounds_kb(
-    inbounds: list[dict], selected: set[int]
+    inbounds: list[dict],
+    selected: set[int],
+    *,
+    toggle_prefix: str = "rsl:ib:t:",
+    done_callback: str = "rsl:ib:done",
 ) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=_inbound_toggle_rows(
             inbounds,
             selected,
-            toggle_prefix="rsl:ib:t:",
-            done_callback="rsl:ib:done",
+            toggle_prefix=toggle_prefix,
+            done_callback=done_callback,
             cancel_callback="rsl:wiz_cancel",
             done_label=L.CONTINUE,
         )
     )
+
+
+def reseller_panel_list_kb(
+    telegram_id: int,
+    assignments: list,
+    panel_labels: dict[int, str],
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for a in assignments:
+        name = panel_labels.get(a.panel_id, f"#{a.panel_id}")
+        if len(name) > 28:
+            name = name[:25] + "..."
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=name,
+                    callback_data=f"rsl:pview:{telegram_id}:{a.panel_id}",
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=L.ADD_PANEL_ASSIGNMENT,
+                callback_data=f"rsl:padd:{telegram_id}",
+            )
+        ]
+    )
+    rows.append(
+        [InlineKeyboardButton(text=L.BACK, callback_data=f"rsl:view:{telegram_id}")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def reseller_panel_assignment_kb(
+    telegram_id: int,
+    panel_id: int,
+    *,
+    is_default: bool,
+    can_remove: bool,
+    assignment_is_active: bool = True,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text=L.EDIT_RESELLER,
+                callback_data=f"rsl:pedit:{telegram_id}:{panel_id}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text=L.panel_create_toggle_label(allowed=assignment_is_active),
+                callback_data=f"rsl:ptoggle:{telegram_id}:{panel_id}",
+            ),
+        ],
+    ]
+    if not is_default:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="⭐ پنل پیش‌فرض",
+                    callback_data=f"rsl:pdefault:{telegram_id}:{panel_id}",
+                ),
+            ]
+        )
+    if can_remove:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🗑 حذف تخصیص",
+                    callback_data=f"rsl:premove:{telegram_id}:{panel_id}",
+                ),
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=L.BACK, callback_data=f"rsl:panels:{telegram_id}"
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def reseller_panel_edit_menu_kb(
+    telegram_id: int, panel_id: int
+) -> InlineKeyboardMarkup:
+    tid, pid = telegram_id, panel_id
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.EDIT_QUOTA,
+                    callback_data=f"rsl:pev:quota:{tid}:{pid}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.EDIT_ADD_QUOTA,
+                    callback_data=f"rsl:pev:addq:{tid}:{pid}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.RESET_QUOTA_USAGE,
+                    callback_data=f"rsl:pev:resetu:{tid}:{pid}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.BACK,
+                    callback_data=f"rsl:pview:{tid}:{pid}",
+                ),
+            ],
+        ]
+    )
+
+
+def reseller_panel_add_pick_kb(
+    panels: list[Panel], telegram_id: int
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for p in panels:
+        label = f"#{p.id} {p.name}"
+        if len(label) > 35:
+            label = label[:32] + "..."
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=f"rsl:padd_pan:{p.id}:{telegram_id}",
+                )
+            ]
+        )
+    rows.append(
+        [InlineKeyboardButton(text=L.CANCEL, callback_data=f"rsl:panels:{telegram_id}")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def reseller_panel_remove_confirm_kb(
+    telegram_id: int, panel_id: int
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.YES_DELETE,
+                    callback_data=f"rsl:premove_yes:{telegram_id}:{panel_id}",
+                ),
+                InlineKeyboardButton(
+                    text=L.NO,
+                    callback_data=f"rsl:pview:{telegram_id}:{panel_id}",
+                ),
+            ],
+        ]
+    )
+
+
+def create_pick_panel_kb(
+    panels: list[tuple[int, str, float]]
+) -> InlineKeyboardMarkup:
+    """panels: (panel_id, name, remaining_gb)"""
+    rows: list[list[InlineKeyboardButton]] = []
+    for panel_id, name, remaining_gb in panels:
+        label = f"{name} — {remaining_gb:.1f} GB"
+        if len(label) > 40:
+            label = label[:37] + "..."
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=f"create:panel:{panel_id}",
+                )
+            ]
+        )
+    rows.append(
+        [InlineKeyboardButton(text=L.CANCEL, callback_data="create:cancel")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def reseller_edit_menu_kb(telegram_id: int) -> InlineKeyboardMarkup:
@@ -775,13 +966,42 @@ def confirm_create_kb() -> InlineKeyboardMarkup:
     )
 
 
-def service_list_kb(emails: list[str]) -> InlineKeyboardMarkup:
-    rows = []
-    for email in emails[:20]:
+def service_list_kb(emails: list[str], *, page: int = 0) -> InlineKeyboardMarkup:
+    total = len(emails)
+    total_pages = max(1, (total + SERVICES_PAGE_SIZE - 1) // SERVICES_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    start = page * SERVICES_PAGE_SIZE
+    chunk = emails[start : start + SERVICES_PAGE_SIZE]
+
+    rows: list[list[InlineKeyboardButton]] = []
+    for email in chunk:
         short = email if len(email) <= 28 else email[:25] + "..."
         rows.append(
             [InlineKeyboardButton(text=short, callback_data=f"svc:{email}")]
         )
+
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text=L.PREV_PAGE, callback_data=f"svc:pg:{page - 1}"
+                )
+            )
+        nav.append(
+            InlineKeyboardButton(
+                text=f"{page + 1}/{total_pages}",
+                callback_data=f"svc:pg:{page}",
+            )
+        )
+        if page < total_pages - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text=L.NEXT_PAGE, callback_data=f"svc:pg:{page + 1}"
+                )
+            )
+        rows.append(nav)
+
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

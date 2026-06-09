@@ -205,6 +205,55 @@ def migrate_006_resellers_lifetime_allocated(sync_conn: Any) -> None:
     )
 
 
+def migrate_007_reseller_panels(sync_conn: Any) -> None:
+    sync_conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS reseller_panels (
+                reseller_tg_id BIGINT NOT NULL,
+                panel_id INTEGER NOT NULL,
+                quota_bytes BIGINT NOT NULL,
+                lifetime_allocated_bytes BIGINT NOT NULL DEFAULT 0,
+                allowed_inbound_ids VARCHAR(255) NOT NULL,
+                attach_inbound_ids VARCHAR(255),
+                max_clients INTEGER,
+                is_active BOOLEAN NOT NULL DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (reseller_tg_id, panel_id),
+                FOREIGN KEY(reseller_tg_id) REFERENCES resellers(telegram_id),
+                FOREIGN KEY(panel_id) REFERENCES panels(id)
+            )
+            """
+        )
+    )
+    sync_conn.execute(
+        text(
+            """
+            INSERT OR IGNORE INTO reseller_panels (
+                reseller_tg_id, panel_id, quota_bytes, lifetime_allocated_bytes,
+                allowed_inbound_ids, attach_inbound_ids, max_clients, is_active
+            )
+            SELECT
+                telegram_id, panel_id, quota_bytes, lifetime_allocated_bytes,
+                allowed_inbound_ids, attach_inbound_ids, max_clients, is_active
+            FROM resellers
+            """
+        )
+    )
+    sync_conn.execute(
+        text(
+            """
+            UPDATE reseller_panels SET lifetime_allocated_bytes = (
+                SELECT COALESCE(SUM(allocated_bytes), 0)
+                FROM client_records
+                WHERE client_records.reseller_tg_id = reseller_panels.reseller_tg_id
+                  AND client_records.panel_id = reseller_panels.panel_id
+            )
+            """
+        )
+    )
+
+
 MIGRATIONS.extend(
     [
         (1, migrate_001_client_records_sub_id),
@@ -213,6 +262,7 @@ MIGRATIONS.extend(
         (4, migrate_004_resellers_panel_id),
         (5, migrate_005_client_records_panel_unique),
         (6, migrate_006_resellers_lifetime_allocated),
+        (7, migrate_007_reseller_panels),
     ]
 )
 

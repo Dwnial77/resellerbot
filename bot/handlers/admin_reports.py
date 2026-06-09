@@ -17,7 +17,11 @@ from bot.utils.report_format import (
     usage_percent_int,
 )
 from db.models import Reseller
-from db.repository import PanelRepository, ResellerRepository
+from db.repository import (
+    PanelRepository,
+    ResellerPanelRepository,
+    ResellerRepository,
+)
 from db.session import get_session_factory
 from services.quota import QuotaService, QuotaStatus, format_max_clients_admin
 from services.reseller_labels import reseller_label
@@ -39,10 +43,11 @@ async def _load_reseller_stats(
     session, resellers: list[Reseller]
 ) -> dict[int, QuotaStatus]:
     repo = ResellerRepository(session)
-    quota = QuotaService(repo)
+    panel_repo = ResellerPanelRepository(session)
+    quota = QuotaService(repo, panel_repo)
     stats: dict[int, QuotaStatus] = {}
     for r in resellers[:20]:
-        stats[r.telegram_id] = await quota.status(r)
+        stats[r.telegram_id] = await quota.status(r, r.panel_id)
     return stats
 
 
@@ -85,27 +90,43 @@ async def _report_hub_content() -> tuple[str, object]:
 async def _reseller_report_content(telegram_id: int) -> str | None:
     async with get_session_factory()() as session:
         repo = ResellerRepository(session)
+        assign_repo = ResellerPanelRepository(session)
+        panels_db = PanelRepository(session)
         reseller = await repo.get(telegram_id)
         if not reseller:
             return None
-        panel = await PanelRepository(session).get(reseller.panel_id)
+        panel = await panels_db.get(reseller.panel_id)
         panel_name = panel.name if panel else f"#{reseller.panel_id}"
-        st = await QuotaService(repo).status(reseller)
+        quota = QuotaService(repo, assign_repo)
+        assignments = await assign_repo.list_for_reseller(telegram_id)
+        panel_lines: list[str] = []
+        client_count = 0
+        for a in assignments:
+            p = await panels_db.get(a.panel_id)
+            pname = p.name if p else f"#{a.panel_id}"
+            st = await quota.status(reseller, a.panel_id)
+            client_count += st.client_count
+            percent = usage_percent_int(st.used_bytes, st.quota_bytes)
+            panel_lines.append(
+                t.RESELLER_REPORT_PANEL_LINE.format(
+                    panel_name=pname,
+                    client_count=st.client_count,
+                    quota_gb=st.quota_gb,
+                    lifetime_gb=st.lifetime_gb,
+                    used_percent=format_used_percent(
+                        st.lifetime_bytes, st.quota_bytes
+                    ),
+                    progress_bar=format_progress_bar_line(percent),
+                )
+            )
 
-    percent = usage_percent_int(st.used_bytes, st.quota_bytes)
     return t.RESELLER_REPORT.format(
         label=reseller_label(reseller),
         status="فعال" if reseller.is_active else "غیرفعال",
         panel_name=panel_name,
         panel_id=reseller.panel_id,
-        client_count=st.client_count,
-        max_clients_line=format_max_clients_admin(st),
-        quota_gb=st.quota_gb,
-        active_gb=st.active_gb,
-        lifetime_gb=st.lifetime_gb,
-        used_percent=format_used_percent(st.lifetime_bytes, st.quota_bytes),
-        progress_bar=format_progress_bar_line(percent),
-        remaining_gb=st.remaining_gb,
+        panels_detail="\n".join(panel_lines) if panel_lines else "—",
+        client_count=client_count,
     )
 
 

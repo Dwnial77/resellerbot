@@ -1,4 +1,4 @@
-"""Apply reseller panel assignment with validation."""
+"""Set reseller default panel (must already be assigned)."""
 
 from __future__ import annotations
 
@@ -8,6 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Panel, Reseller
 from db.repository import PanelRepository, ResellerRepository
+from services.reseller_panel_edit import (
+    AssignmentNotFoundError,
+    PanelNotFoundError as AssignmentPanelNotFoundError,
+    ResellerNotFoundError as AssignmentResellerNotFoundError,
+    apply_set_default_panel,
+)
 
 
 class ResellerNotFoundError(LookupError):
@@ -19,11 +25,11 @@ class PanelNotFoundError(LookupError):
 
 
 class SetPanelBlockedError(ValueError):
-    """Reseller has clients; panel cannot be changed."""
+    """Panel is not assigned to reseller."""
 
-    def __init__(self, client_count: int) -> None:
-        self.client_count = client_count
-        super().__init__(client_count)
+    def __init__(self, panel_id: int) -> None:
+        self.panel_id = panel_id
+        super().__init__(panel_id)
 
 
 @dataclass
@@ -36,24 +42,27 @@ class SetPanelResult:
 async def apply_reseller_panel(
     session: AsyncSession, telegram_id: int, panel_id: int
 ) -> SetPanelResult:
-    panel_repo = PanelRepository(session)
     reseller_repo = ResellerRepository(session)
-
-    panel = await panel_repo.get(panel_id)
-    if panel is None:
-        raise PanelNotFoundError()
-
     reseller = await reseller_repo.get(telegram_id)
     if reseller is None:
         raise ResellerNotFoundError()
-
     if reseller.panel_id == panel_id:
+        panel = await PanelRepository(session).get(panel_id)
+        if panel is None:
+            raise PanelNotFoundError()
         return SetPanelResult(reseller=reseller, panel=panel, unchanged=True)
 
-    client_count = await reseller_repo.client_count(telegram_id)
-    if client_count > 0:
-        raise SetPanelBlockedError(client_count)
+    try:
+        result = await apply_set_default_panel(session, telegram_id, panel_id)
+    except AssignmentResellerNotFoundError:
+        raise ResellerNotFoundError() from None
+    except AssignmentPanelNotFoundError:
+        raise PanelNotFoundError() from None
+    except AssignmentNotFoundError:
+        raise SetPanelBlockedError(panel_id) from None
 
-    updated = await reseller_repo.set_panel_id(telegram_id, panel_id)
+    updated = await reseller_repo.get(telegram_id)
     assert updated is not None
-    return SetPanelResult(reseller=updated, panel=panel, unchanged=False)
+    return SetPanelResult(
+        reseller=updated, panel=result.panel, unchanged=False
+    )

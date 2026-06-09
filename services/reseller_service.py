@@ -10,9 +10,10 @@ from bot.utils.format_traffic import client_traffic_used_bytes
 from db.models import ClientRecord, Reseller
 from db.repository import (
     ClientRepository,
+    ResellerPanelRepository,
     ResellerRepository,
     UsageAlertRepository,
-    resolve_attach_inbound_ids,
+    resolve_attach_inbound_ids_for_assignment,
 )
 from services.usage_alerts import CLIENT_TRAFFIC
 from services.quota import QuotaExceeded, QuotaService
@@ -67,8 +68,9 @@ class ResellerService:
                 "پنل اختصاصی شما در دسترس نیست. با ادمین تماس بگیرید."
             )
         self.reseller_repo = ResellerRepository(session)
+        self.panel_repo = ResellerPanelRepository(session)
         self.client_repo = ClientRepository(session)
-        self.quota = QuotaService(self.reseller_repo)
+        self.quota = QuotaService(self.reseller_repo, self.panel_repo)
         self.xui = xui
 
     async def get_reseller(self, telegram_id: int) -> Reseller | None:
@@ -82,12 +84,18 @@ class ResellerService:
         inbound_ids: list[int] | None = None,
         *,
         client_suffix: str,
+        panel_id: int,
     ) -> tuple[ClientRecord, ClientDelivery]:
-        ids = inbound_ids or resolve_attach_inbound_ids(reseller)
-        allocated = await self.quota.validate_create(reseller, volume_gb, ids)
+        assignment = await self.panel_repo.get(reseller.telegram_id, panel_id)
+        if not assignment:
+            raise XuiError("این پنل به حساب شما اختصاص داده نشده.")
+        ids = inbound_ids or resolve_attach_inbound_ids_for_assignment(assignment)
+        allocated = await self.quota.validate_create(
+            reseller, panel_id, volume_gb, ids
+        )
 
         email = build_client_email(reseller, client_suffix)
-        if await self.client_repo.email_exists(email, panel_id=reseller.panel_id):
+        if await self.client_repo.email_exists(email, panel_id=panel_id):
             raise XuiError("این نام سرویس قبلاً استفاده شده.")
         existing_panel = await self.xui.get_client(email)
         if existing_panel is not None:
@@ -98,7 +106,7 @@ class ResellerService:
 
         record = await self.client_repo.add(
             reseller_tg_id=reseller.telegram_id,
-            panel_id=reseller.panel_id,
+            panel_id=panel_id,
             email=email,
             inbound_ids=ids,
             allocated_bytes=allocated,
@@ -125,9 +133,13 @@ class ResellerService:
             await self.client_repo.delete(record)
             raise XuiError(str(e) or "خطای ناشناخته پنل") from e
 
-        await self.reseller_repo.add_lifetime_allocated(
-            reseller.telegram_id, allocated
+        await self.panel_repo.add_lifetime_allocated(
+            reseller.telegram_id, panel_id, allocated
         )
+        if panel_id == reseller.panel_id:
+            await self.reseller_repo.add_lifetime_allocated(
+                reseller.telegram_id, allocated
+            )
         return record, delivery
 
     async def delete_service(
@@ -150,9 +162,13 @@ class ResellerService:
         )
         await self.client_repo.delete(record)
         if refund > 0:
-            await self.reseller_repo.subtract_lifetime_allocated(
-                reseller.telegram_id, refund
+            await self.panel_repo.subtract_lifetime_allocated(
+                reseller.telegram_id, record.panel_id, refund
             )
+            if record.panel_id == reseller.panel_id:
+                await self.reseller_repo.subtract_lifetime_allocated(
+                    reseller.telegram_id, refund
+                )
         return DeleteServiceResult(refunded_bytes=refund)
 
     async def get_traffic(self, reseller: Reseller, email: str) -> dict:
@@ -223,16 +239,23 @@ class ResellerService:
         self, reseller: Reseller, email: str, volume_gb: float
     ) -> AddTrafficResult:
         record = await self._get_owned_record(reseller, email)
+        panel_id = record.panel_id
         try:
-            allocated = await self.quota.validate_add_traffic(reseller, volume_gb)
+            allocated = await self.quota.validate_add_traffic(
+                reseller, panel_id, volume_gb
+            )
         except QuotaExceeded as e:
             raise XuiError(str(e)) from e
         await self.xui.add_client_traffic_bytes(email, allocated)
         record = await self.client_repo.add_allocated_bytes(record, allocated)
-        await self.reseller_repo.add_lifetime_allocated(
-            reseller.telegram_id, allocated
+        await self.panel_repo.add_lifetime_allocated(
+            reseller.telegram_id, panel_id, allocated
         )
-        st = await self.quota.status(reseller)
+        if panel_id == reseller.panel_id:
+            await self.reseller_repo.add_lifetime_allocated(
+                reseller.telegram_id, allocated
+            )
+        st = await self.quota.status(reseller, panel_id)
         return AddTrafficResult(
             added_bytes=allocated,
             new_total_bytes=record.allocated_bytes,

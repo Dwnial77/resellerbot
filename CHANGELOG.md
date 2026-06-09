@@ -7,11 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-06-01
+
 ### Added
 
-- Admin bot update menu: **آپدیت از GitHub** downloads latest `resellerbot-X.Y.Z.zip` from GitHub Releases automatically (public repo, no token)
-- Manual ZIP upload remains available via **آپلود ZIP**
-- Settings: `GITHUB_REPO`, `GITHUB_UPDATE_ENABLED`
+- **Multi-panel resellers**: admin assigns multiple 3x-ui panels per reseller with independent quota, inbounds, max clients, and active flag (`reseller_panels` table, migration 007)
+- Admin **مدیریت پنل‌ها** hub: add/remove panel assignments, per-panel quota edit, set default panel
+- Reseller picks panel when creating a service (skipped when only one active panel)
+- Account status and admin reports show per-panel quota summary
+- Usage alerts for quota thresholds are per-panel
+- `/set_panel` now sets the **default** panel among existing assignments (no longer requires zero clients)
+
+### Changed
+
+- `QuotaService` and `ResellerService` operate per `(reseller, panel_id)`; legacy `resellers` columns synced for default panel compat
+- Admin bot update menu: **آپدیت از GitHub** downloads latest release ZIP from GitHub Releases
 
 ## [1.1.5] - 2026-06-01
 

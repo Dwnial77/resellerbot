@@ -39,6 +39,9 @@ class Panel(Base):
     )
 
     resellers: Mapped[list["Reseller"]] = relationship(back_populates="panel")
+    reseller_assignments: Mapped[list["ResellerPanel"]] = relationship(
+        back_populates="panel"
+    )
 
 
 class Reseller(Base):
@@ -63,6 +66,38 @@ class Reseller(Base):
 
     panel: Mapped["Panel"] = relationship(back_populates="resellers")
     clients: Mapped[list["ClientRecord"]] = relationship(back_populates="reseller")
+    panel_assignments: Mapped[list["ResellerPanel"]] = relationship(
+        back_populates="reseller"
+    )
+
+
+class ResellerPanel(Base):
+    """Per-panel quota, inbounds, and limits for a reseller."""
+
+    __tablename__ = "reseller_panels"
+
+    reseller_tg_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("resellers.telegram_id"),
+        primary_key=True,
+    )
+    panel_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("panels.id"), primary_key=True, index=True
+    )
+    quota_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    lifetime_allocated_bytes: Mapped[int] = mapped_column(
+        BigInteger, default=0, nullable=False
+    )
+    allowed_inbound_ids: Mapped[str] = mapped_column(String(255), nullable=False)
+    attach_inbound_ids: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    max_clients: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    reseller: Mapped["Reseller"] = relationship(back_populates="panel_assignments")
+    panel: Mapped["Panel"] = relationship(back_populates="reseller_assignments")
 
 
 class ClientRecord(Base):

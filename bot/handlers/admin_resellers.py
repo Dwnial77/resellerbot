@@ -28,6 +28,7 @@ from bot.states import AddResellerStates, EditResellerStates
 from bot.texts import fa as t
 from db.repository import (
     PanelRepository,
+    ResellerPanelRepository,
     ResellerRepository,
     inbound_ids_from_json,
     resolve_attach_inbound_ids,
@@ -96,35 +97,41 @@ async def _reseller_view_content(
 ) -> tuple[str, object] | None:
     async with get_session_factory()() as session:
         repo = ResellerRepository(session)
+        panel_assign_repo = ResellerPanelRepository(session)
         reseller = await repo.get(telegram_id)
         if not reseller:
             return None
-        panel_repo = PanelRepository(session)
-        panel = await panel_repo.get(reseller.panel_id)
+        panels_db = PanelRepository(session)
+        panel = await panels_db.get(reseller.panel_id)
         panel_name = panel.name if panel else f"#{reseller.panel_id}"
-        st = await QuotaService(repo).status(reseller)
-        client_count = st.client_count
-        allowed = inbound_ids_from_json(reseller.allowed_inbound_ids)
-        attach = resolve_attach_inbound_ids(reseller)
+        assignments = await panel_assign_repo.list_for_reseller(telegram_id)
+        quota_svc = QuotaService(repo, panel_assign_repo)
+        panel_lines: list[str] = []
+        client_count = 0
+        for a in assignments:
+            p = await panels_db.get(a.panel_id)
+            pname = p.name if p else f"#{a.panel_id}"
+            st = await quota_svc.status(reseller, a.panel_id)
+            client_count += st.client_count
+            mark = " *" if a.panel_id == reseller.panel_id else ""
+            panel_lines.append(
+                f"• {pname}{mark}: {st.remaining_gb:.1f}/{st.quota_gb:.1f} GB — "
+                f"{st.client_count} سرویس"
+            )
+        panels_summary = "\n".join(panel_lines) if panel_lines else "—"
 
     text = t.RESELLER_VIEW_DETAIL.format(
         label=reseller_label(reseller),
         status="فعال" if reseller.is_active else "غیرفعال",
         panel_name=panel_name,
         panel_id=reseller.panel_id,
-        quota_gb=st.quota_gb,
-        active_gb=st.active_gb,
-        lifetime_gb=st.lifetime_gb,
-        remaining_gb=st.remaining_gb,
+        panels_summary=panels_summary,
         client_count=client_count,
-        max_clients_line=format_max_clients_admin(st),
-        allowed_inbounds=", ".join(str(i) for i in allowed),
-        attach_inbounds=", ".join(str(i) for i in attach),
     )
     markup = reseller_view_kb(
         telegram_id,
         is_active=reseller.is_active,
-        can_change_panel=client_count == 0,
+        can_change_panel=False,
     )
     return text, markup
 
@@ -1013,18 +1020,33 @@ async def edit_value_text(message: Message, state: FSMContext) -> None:
     kind = data.get("edit_kind")
     text_in = (message.text or "").strip()
 
+    panel_id = data.get("panel_id")
     async with get_session_factory()() as session:
         try:
             if kind == "quota":
                 quota_gb = float(text_in.replace(",", "."))
                 if quota_gb <= 0:
                     raise ValueError
-                result = await apply_quota(session, tg_id, quota_gb)
+                if panel_id is not None:
+                    from services.reseller_panel_edit import apply_panel_quota
+
+                    result = await apply_panel_quota(
+                        session, tg_id, int(panel_id), quota_gb
+                    )
+                else:
+                    result = await apply_quota(session, tg_id, quota_gb)
             elif kind == "add_quota":
                 add_gb = float(text_in.replace(",", "."))
                 if add_gb <= 0:
                     raise ValueError
-                result = await apply_add_quota(session, tg_id, add_gb)
+                if panel_id is not None:
+                    from services.reseller_panel_edit import apply_panel_add_quota
+
+                    result = await apply_panel_add_quota(
+                        session, tg_id, int(panel_id), add_gb
+                    )
+                else:
+                    result = await apply_add_quota(session, tg_id, add_gb)
             elif kind == "name":
                 display_name = normalize_display_name(text_in)
                 result = await apply_display_name(session, tg_id, display_name)

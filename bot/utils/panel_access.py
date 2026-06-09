@@ -24,6 +24,12 @@ def format_reseller_panel_unavailable(exc: ResellerPanelUnavailableError) -> str
         )
     if exc.reason == ResellerPanelReason.MISSING:
         return t.RESELLER_PANEL_MISSING.format(panel_id=exc.panel_id)
+    if exc.reason == ResellerPanelReason.NOT_ASSIGNED:
+        return t.RESELLER_PANEL_NOT_ASSIGNED.format(panel_id=exc.panel_id)
+    if exc.reason == ResellerPanelReason.ASSIGNMENT_INACTIVE:
+        return t.RESELLER_PANEL_ASSIGNMENT_INACTIVE.format(
+            panel_name=name, panel_id=exc.panel_id
+        )
     return t.RESELLER_PANEL_NOT_LOADED.format(
         panel_name=name, panel_id=exc.panel_id
     )

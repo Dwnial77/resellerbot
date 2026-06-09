@@ -2,6 +2,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 
 class CreateServiceStates(StatesGroup):
+    pick_panel = State()
     volume = State()
     expiry = State()
     client_name = State()
@@ -56,6 +57,12 @@ class AddResellerStates(StatesGroup):
 class EditResellerStates(StatesGroup):
     value = State()
     pick_inbounds = State()
+
+
+class AddResellerPanelStates(StatesGroup):
+    pick_panel = State()
+    quota = State()
+    inbounds = State()
 
 
 class BotUpdateStates(StatesGroup):

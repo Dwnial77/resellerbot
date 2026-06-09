@@ -4,10 +4,11 @@ from bot.keyboards.common import reseller_admin_hub_kb, reseller_view_kb
 
 def test_reseller_view_kb_builds_without_error() -> None:
     kb = reseller_view_kb(123, is_active=True, can_change_panel=True)
-    assert len(kb.inline_keyboard) == 5
-    assert kb.inline_keyboard[1][0].callback_data == "rsl:edit:123"
+    assert len(kb.inline_keyboard) == 6
+    assert kb.inline_keyboard[1][0].callback_data == "rsl:panels:123"
+    assert kb.inline_keyboard[2][0].callback_data == "rsl:edit:123"
     kb2 = reseller_view_kb(123, is_active=False, can_change_panel=False)
-    assert len(kb2.inline_keyboard) == 4
+    assert len(kb2.inline_keyboard) == 5
 
 
 def test_edit_callback_data_under_64_bytes() -> None:

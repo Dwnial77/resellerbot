@@ -16,6 +16,8 @@ ACCOUNT_STATUS = "👤 وضعیت حساب"
 
 # Common actions
 BACK = "◀️ بازگشت"
+PREV_PAGE = "◀ قبلی"
+NEXT_PAGE = "بعدی ▶"
 REFRESH = "🔄 بروزرسانی"
 CANCEL = "❌ لغو"
 CONFIRM = "✅ تأیید"
@@ -43,6 +45,8 @@ SKIP_PUBLIC_SUB = "⏭ بدون آدرس ساب عمومی"
 
 # Reseller management
 EDIT_RESELLER = "✏️ ویرایش ریسلر"
+MANAGE_PANELS = "🖥 مدیریت پنل‌ها"
+ADD_PANEL_ASSIGNMENT = "➕ افزودن پنل"
 CHANGE_PANEL = "🔄 تغییر پنل"
 DELETE_RESELLER = "🗑 حذف ریسلر"
 NO_DISPLAY_NAME = "⏭ بدون نام"
@@ -80,6 +84,10 @@ NEW_DATE = "📅 تاریخ جدید"
 
 def active_toggle_label(*, is_active: bool) -> str:
     return "⏸ غیرفعال کردن" if is_active else "🔛 فعال کردن"
+
+
+def panel_create_toggle_label(*, allowed: bool) -> str:
+    return "⏸ ممنوع کردن ساخت" if allowed else "🔛 مجاز کردن ساخت"
 
 
 def reseller_hub_row_label(

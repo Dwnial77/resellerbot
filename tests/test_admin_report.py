@@ -7,7 +7,7 @@ from bot.utils.report_format import (
     format_report_button_label,
     format_used_percent,
 )
-from db.models import Reseller
+from db.models import Reseller, ResellerPanel
 from services.quota import QuotaService
 
 
@@ -53,11 +53,21 @@ def test_quota_status_for_report() -> None:
             attach_inbound_ids="[1]",
             max_clients=5,
         )
+        assignment = ResellerPanel(
+            reseller_tg_id=100,
+            panel_id=1,
+            quota_bytes=10 * 1024**3,
+            lifetime_allocated_bytes=3 * 1024**3,
+            allowed_inbound_ids="[1]",
+            is_active=True,
+        )
         repo = AsyncMock()
-        repo.active_bytes = AsyncMock(return_value=2 * 1024**3)
-        repo.client_count = AsyncMock(return_value=2)
+        repo.active_bytes_on_panel = AsyncMock(return_value=2 * 1024**3)
+        repo.client_count_on_panel = AsyncMock(return_value=2)
+        panel_repo = AsyncMock()
+        panel_repo.get = AsyncMock(return_value=assignment)
 
-        st = await QuotaService(repo).status(reseller)
+        st = await QuotaService(repo, panel_repo).status(reseller, 1)
         assert st.client_count == 2
         assert st.quota_gb == 10.0
         assert st.lifetime_gb == 3.0

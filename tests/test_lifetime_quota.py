@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from db.models import ClientRecord, Reseller
+from db.models import ClientRecord, Reseller, ResellerPanel
 from services.quota import QuotaExceeded, QuotaService
 from services.reseller_edit import apply_add_quota, apply_reset_quota_usage
 from services.reseller_service import (
@@ -33,14 +33,33 @@ def _reseller(
     )
 
 
+def _assignment(reseller: Reseller, *, quota_gb: float, lifetime_gb: float) -> ResellerPanel:
+    return ResellerPanel(
+        reseller_tg_id=reseller.telegram_id,
+        panel_id=reseller.panel_id,
+        quota_bytes=gb_to_bytes(quota_gb),
+        lifetime_allocated_bytes=gb_to_bytes(lifetime_gb),
+        allowed_inbound_ids="[1]",
+        attach_inbound_ids="[1]",
+        is_active=True,
+    )
+
+
+def _quota_service(reseller: Reseller, *, quota_gb: float, lifetime_gb: float, active_gb: float = 0, client_count: int = 0) -> QuotaService:
+    assignment = _assignment(reseller, quota_gb=quota_gb, lifetime_gb=lifetime_gb)
+    repo = AsyncMock()
+    repo.active_bytes_on_panel = AsyncMock(return_value=gb_to_bytes(active_gb))
+    repo.client_count_on_panel = AsyncMock(return_value=client_count)
+    panel_repo = AsyncMock()
+    panel_repo.get = AsyncMock(return_value=assignment)
+    return QuotaService(repo, panel_repo)
+
+
 def test_status_uses_lifetime_for_remaining() -> None:
     async def _run() -> None:
         reseller = _reseller(quota_gb=500, lifetime_gb=300)
-        repo = AsyncMock()
-        repo.active_bytes = AsyncMock(return_value=gb_to_bytes(100))
-        repo.client_count = AsyncMock(return_value=2)
-
-        st = await QuotaService(repo).status(reseller)
+        svc = _quota_service(reseller, quota_gb=500, lifetime_gb=300, active_gb=100, client_count=2)
+        st = await svc.status(reseller, 1)
         assert st.active_gb == 100.0
         assert st.lifetime_gb == 300.0
         assert st.remaining_gb == 200.0
@@ -52,12 +71,9 @@ def test_status_uses_lifetime_for_remaining() -> None:
 def test_validate_create_rejects_over_remaining() -> None:
     async def _run() -> None:
         reseller = _reseller(quota_gb=500, lifetime_gb=500)
-        repo = AsyncMock()
-        repo.active_bytes = AsyncMock(return_value=0)
-        repo.client_count = AsyncMock(return_value=0)
-
+        svc = _quota_service(reseller, quota_gb=500, lifetime_gb=500)
         with pytest.raises(QuotaExceeded, match="باقی"):
-            await QuotaService(repo).validate_create(reseller, 10, [1])
+            await QuotaService(svc.repo, svc.panel_repo).validate_create(reseller, 1, 10, [1])
 
     asyncio.run(_run())
 
@@ -65,11 +81,8 @@ def test_validate_create_rejects_over_remaining() -> None:
 def test_validate_create_allows_within_remaining() -> None:
     async def _run() -> None:
         reseller = _reseller(quota_gb=500, lifetime_gb=400)
-        repo = AsyncMock()
-        repo.active_bytes = AsyncMock(return_value=gb_to_bytes(50))
-        repo.client_count = AsyncMock(return_value=1)
-
-        allocated = await QuotaService(repo).validate_create(reseller, 50, [1])
+        svc = _quota_service(reseller, quota_gb=500, lifetime_gb=400, active_gb=50, client_count=1)
+        allocated = await svc.validate_create(reseller, 1, 50, [1])
         assert allocated == gb_to_bytes(50)
 
     asyncio.run(_run())
@@ -112,10 +125,17 @@ def test_apply_reset_quota_usage_syncs_lifetime_to_active() -> None:
         repo = MagicMock()
         repo.get = AsyncMock(return_value=row)
         repo.reset_lifetime_to_active = AsyncMock(return_value=reset_row)
-        repo.active_bytes = AsyncMock(return_value=active)
-        repo.client_count = AsyncMock(return_value=2)
+        repo.active_bytes_on_panel = AsyncMock(return_value=active)
+        repo.client_count_on_panel = AsyncMock(return_value=2)
+        panel_repo = AsyncMock()
+        panel_repo.get = AsyncMock(
+            return_value=_assignment(row, quota_gb=500, lifetime_gb=80)
+        )
 
-        with patch("services.reseller_edit.ResellerRepository", return_value=repo):
+        with (
+            patch("services.reseller_edit.ResellerRepository", return_value=repo),
+            patch("services.reseller_edit.ResellerPanelRepository", return_value=panel_repo),
+        ):
             result = await apply_reset_quota_usage(session, 100)
 
         repo.reset_lifetime_to_active.assert_awaited_once_with(100)
@@ -166,6 +186,9 @@ def _delete_service_mocks(
     reseller_repo = AsyncMock()
     reseller_repo.subtract_lifetime_allocated = AsyncMock()
 
+    panel_repo = AsyncMock()
+    panel_repo.subtract_lifetime_allocated = AsyncMock()
+
     client_repo = AsyncMock()
     record = _client_record(allocated_gb=allocated_gb)
     client_repo.get_for_reseller_email = AsyncMock(return_value=record)
@@ -174,8 +197,9 @@ def _delete_service_mocks(
 
     svc = ResellerService(session, xui)
     svc.reseller_repo = reseller_repo
+    svc.panel_repo = panel_repo
     svc.client_repo = client_repo
-    return svc, xui, reseller_repo, client_repo
+    return svc, xui, reseller_repo, panel_repo
 
 
 async def _delete_service(
@@ -190,10 +214,13 @@ async def _delete_service(
 
 def test_delete_service_refunds_when_used_under_1gb() -> None:
     async def _run() -> None:
-        svc, _, reseller_repo, _ = _delete_service_mocks(used_bytes=500 * 1024**2)
+        svc, _, reseller_repo, panel_repo = _delete_service_mocks(used_bytes=500 * 1024**2)
         result = await _delete_service(svc, _reseller())
         assert isinstance(result, DeleteServiceResult)
         assert result.refunded_bytes == gb_to_bytes(50)
+        panel_repo.subtract_lifetime_allocated.assert_awaited_once_with(
+            100, 1, gb_to_bytes(50)
+        )
         reseller_repo.subtract_lifetime_allocated.assert_awaited_once_with(
             100, gb_to_bytes(50)
         )
@@ -203,9 +230,10 @@ def test_delete_service_refunds_when_used_under_1gb() -> None:
 
 def test_delete_service_no_refund_at_1gb() -> None:
     async def _run() -> None:
-        svc, _, reseller_repo, _ = _delete_service_mocks(used_bytes=gb_to_bytes(1))
+        svc, _, reseller_repo, panel_repo = _delete_service_mocks(used_bytes=gb_to_bytes(1))
         result = await _delete_service(svc, _reseller())
         assert result.refunded_bytes == 0
+        panel_repo.subtract_lifetime_allocated.assert_not_called()
         reseller_repo.subtract_lifetime_allocated.assert_not_called()
 
     asyncio.run(_run())
@@ -213,12 +241,13 @@ def test_delete_service_no_refund_at_1gb() -> None:
 
 def test_delete_service_no_refund_on_traffic_error() -> None:
     async def _run() -> None:
-        svc, _, reseller_repo, client_repo = _delete_service_mocks(
+        svc, _, reseller_repo, panel_repo = _delete_service_mocks(
             used_bytes=0, traffic_error=True
         )
         result = await _delete_service(svc, _reseller())
         assert result.refunded_bytes == 0
         reseller_repo.subtract_lifetime_allocated.assert_not_called()
-        client_repo.delete.assert_awaited_once()
+        panel_repo.subtract_lifetime_allocated.assert_not_called()
+        svc.client_repo.delete.assert_awaited_once()
 
     asyncio.run(_run())
