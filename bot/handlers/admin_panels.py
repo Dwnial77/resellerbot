@@ -11,14 +11,24 @@ from bot.utils.panel_url import InvalidPanelUrlError, normalize_http_url, normal
 from bot.keyboards.common import (
     panel_admin_hub_kb,
     panel_delete_confirm_kb,
+    panel_edit_menu_kb,
+    panel_edit_sub_kb,
     panel_view_kb,
     panel_wizard_confirm_kb,
     panel_wizard_skip_sub_kb,
 )
-from bot.states import AddPanelStates
+from bot.states import AddPanelStates, EditPanelStates
 from bot.texts import fa as t
 from db.repository import PanelRepository
 from db.session import get_session_factory
+from services.panel_edit import (
+    PanelConnectionError,
+    PanelNotFoundError,
+    apply_panel_api_token,
+    apply_panel_base_url,
+    apply_panel_name,
+    apply_panel_sub_public_url,
+)
 from services.panel_registry import PanelNotFoundError, PanelRegistry
 from xui.client import XuiClient
 
@@ -245,6 +255,165 @@ async def panel_view(callback: CallbackQuery) -> None:
         reply_markup=panel_view_kb(panel_id, is_active=row.is_active),
     )
     await callback.answer()
+
+
+async def _refresh_panel_view(
+    message: Message, panel_id: int, *, prefix: str = ""
+) -> None:
+    async with get_session_factory()() as session:
+        row = await PanelRepository(session).get(panel_id)
+    if not row:
+        await message.edit_text(t.PANEL_NOT_FOUND)
+        return
+    text = _panel_summary(row)
+    if prefix:
+        text = f"{prefix}\n\n{text}"
+    await message.edit_text(
+        text,
+        reply_markup=panel_view_kb(panel_id, is_active=row.is_active),
+    )
+
+
+@router.callback_query(F.data.startswith("pnl:edit:"))
+async def panel_edit_menu(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id if callback.from_user else None):
+        return
+    if not callback.message or not callback.data:
+        return
+    await state.clear()
+    panel_id = int(callback.data.split(":", 2)[2])
+    async with get_session_factory()() as session:
+        row = await PanelRepository(session).get(panel_id)
+    if not row:
+        await callback.answer(t.PANEL_NOT_FOUND, show_alert=True)
+        return
+    await callback.message.edit_text(
+        t.PANEL_EDIT_MENU.format(id=panel_id, name=row.name),
+        reply_markup=panel_edit_menu_kb(panel_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.regexp(r"^pnl:pev:(name|url|token|sub):\d+$"))
+async def panel_edit_start(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id if callback.from_user else None):
+        return
+    if not callback.message or not callback.data:
+        return
+    parts = callback.data.split(":")
+    kind = parts[2]
+    panel_id = int(parts[3])
+    async with get_session_factory()() as session:
+        row = await PanelRepository(session).get(panel_id)
+    if not row:
+        await callback.answer(t.PANEL_NOT_FOUND, show_alert=True)
+        return
+    await state.set_state(EditPanelStates.value)
+    await state.update_data(panel_id=panel_id, edit_kind=kind)
+    prompts = {
+        "name": t.PANEL_EDIT_NAME_PROMPT,
+        "url": t.PANEL_EDIT_URL_PROMPT,
+        "token": t.PANEL_EDIT_TOKEN_PROMPT,
+        "sub": t.PANEL_EDIT_SUB_PROMPT,
+    }
+    markup = panel_edit_sub_kb(panel_id) if kind == "sub" else None
+    await callback.message.edit_text(
+        prompts[kind].format(id=panel_id, name=row.name),
+        reply_markup=markup,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("pnl:sub_clear:"))
+async def panel_edit_sub_clear(
+    callback: CallbackQuery, state: FSMContext, panel_registry: PanelRegistry
+) -> None:
+    if not _is_admin(callback.from_user.id if callback.from_user else None):
+        return
+    if not callback.message or not callback.data:
+        return
+    panel_id = int(callback.data.split(":", 2)[2])
+    await state.clear()
+    async with get_session_factory()() as session:
+        try:
+            result = await apply_panel_sub_public_url(session, panel_id, None)
+        except PanelNotFoundError:
+            await callback.answer(t.PANEL_NOT_FOUND, show_alert=True)
+            return
+        await panel_registry.reload_panel(session, panel_id)
+    await _refresh_panel_view(
+        callback.message, panel_id, prefix=result.message_text  # type: ignore[arg-type]
+    )
+    await callback.answer()
+
+
+@router.message(EditPanelStates.value)
+async def panel_edit_value(
+    message: Message, state: FSMContext, panel_registry: PanelRegistry
+) -> None:
+    if not _is_admin(message.from_user.id if message.from_user else None):
+        return
+    data = await state.get_data()
+    panel_id = data.get("panel_id")
+    kind = data.get("edit_kind")
+    text_in = (message.text or "").strip()
+    if panel_id is None or not kind:
+        await state.clear()
+        await message.answer(t.INVALID_INPUT)
+        return
+
+    async with get_session_factory()() as session:
+        try:
+            if kind == "name":
+                if not text_in:
+                    raise ValueError
+                result = await apply_panel_name(session, int(panel_id), text_in)
+            elif kind == "url":
+                result = await apply_panel_base_url(
+                    session, int(panel_id), text_in
+                )
+            elif kind == "token":
+                if not text_in:
+                    raise ValueError
+                result = await apply_panel_api_token(
+                    session, int(panel_id), text_in
+                )
+            elif kind == "sub":
+                try:
+                    sub = normalize_sub_public_url(text_in)
+                except InvalidPanelUrlError as e:
+                    await message.answer(str(e))
+                    return
+                result = await apply_panel_sub_public_url(
+                    session, int(panel_id), sub
+                )
+            else:
+                await message.answer(t.INVALID_INPUT)
+                return
+        except PanelNotFoundError:
+            await state.clear()
+            await message.answer(t.PANEL_NOT_FOUND)
+            return
+        except PanelConnectionError as e:
+            await message.answer(t.PANEL_AUTH_FAILED.format(error=e.message))
+            return
+        except (ValueError, InvalidPanelUrlError):
+            await message.answer(t.INVALID_INPUT)
+            return
+
+        await panel_registry.reload_panel(session, int(panel_id))
+
+    await state.clear()
+    async with get_session_factory()() as session:
+        row = await PanelRepository(session).get(int(panel_id))
+    if not row:
+        await message.answer(result.message_text)
+        return
+    summary = _panel_summary(row)
+    await message.answer(
+        f"{result.message_text}\n\n{summary}",
+        reply_markup=panel_view_kb(int(panel_id), is_active=row.is_active),
+    )
 
 
 @router.callback_query(F.data.startswith("pnl:toggle:"))

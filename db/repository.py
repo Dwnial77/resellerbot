@@ -844,6 +844,53 @@ class PanelRepository:
         await self.session.refresh(row)
         return row
 
+    async def update_name(self, panel_id: int, name: str) -> Panel | None:
+        row = await self.get(panel_id)
+        if not row:
+            return None
+        name = name.strip()
+        if not name:
+            raise ValueError("نام پنل نمی‌تواند خالی باشد.")
+        row.name = name
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def update_base_url(self, panel_id: int, base_url: str) -> Panel | None:
+        row = await self.get(panel_id)
+        if not row:
+            return None
+        row.base_url = normalize_http_url(base_url)
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def update_api_token(self, panel_id: int, api_token: str) -> Panel | None:
+        row = await self.get(panel_id)
+        if not row:
+            return None
+        token = api_token.strip()
+        if not token:
+            raise ValueError("توکن API نمی‌تواند خالی باشد.")
+        row.api_token = token
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def update_sub_public_url(
+        self, panel_id: int, sub_public_url: str | None
+    ) -> Panel | None:
+        row = await self.get(panel_id)
+        if not row:
+            return None
+        if sub_public_url is None or not str(sub_public_url).strip():
+            row.sub_public_url = None
+        else:
+            row.sub_public_url = normalize_sub_public_url(str(sub_public_url))
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
     async def reseller_count(self, panel_id: int) -> int:
         rp = ResellerPanelRepository(self.session)
         count = await rp.assignment_count_on_panel(panel_id)

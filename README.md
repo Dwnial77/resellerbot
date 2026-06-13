@@ -100,7 +100,8 @@ cd resellerbot
 python -m venv .venv
 
 # فعال‌سازی در ویندوز:
-.venv\Scripts\activate
+
+
 # فعال‌سازی در لینوکس یا مک:
 # source .venv/bin/activate
 

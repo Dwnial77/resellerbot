@@ -91,6 +91,22 @@ PANEL_WIZARD_CONFIRM = (
     "پس از تأیید اتصال تست می‌شود."
 )
 PANEL_WIZARD_CANCELLED = "افزودن پنل لغو شد."
+PANEL_EDIT_MENU = "ویرایش پنل #{id} ({name}):"
+PANEL_EDIT_NAME_PROMPT = "نام جدید پنل #{id} ({name}):"
+PANEL_EDIT_URL_PROMPT = (
+    "آدرس جدید پنل #{id}:\n"
+    "• https://host:2053 یا http://host:2053\n"
+    "• یا فقط host:2053 (پیش‌فرض https)"
+)
+PANEL_EDIT_TOKEN_PROMPT = "توکن API جدید پنل #{id} ({name}):"
+PANEL_EDIT_SUB_PROMPT = (
+    "آدرس پایه ساب عمومی پنل #{id}:\n"
+    "یا «بدون آدرس ساب عمومی» را بزنید."
+)
+PANEL_NAME_UPDATED = "نام پنل #{id} به‌روز شد: {name}"
+PANEL_URL_UPDATED = "آدرس پنل #{id} ({name}) به‌روز شد:\n{base_url}"
+PANEL_TOKEN_UPDATED = "توکن API پنل #{id} ({name}) به‌روز شد."
+PANEL_SUB_UPDATED = "ساب عمومی پنل #{id} ({name}): {sub_public_url}"
 PANEL_AUTH_FAILED = "اتصال به پنل ناموفق بود:\n{error}"
 PANEL_SET_FOR_RESELLER = (
     "پنل ریسلر {label} به {panel_name} (#{panel_id}) تغییر کرد."

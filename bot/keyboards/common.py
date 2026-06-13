@@ -113,6 +113,12 @@ def panel_view_kb(panel_id: int, *, is_active: bool) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
+                    text=L.EDIT_PANEL,
+                    callback_data=f"pnl:edit:{panel_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
                     text=L.active_toggle_label(is_active=is_active),
                     callback_data=f"pnl:toggle:{panel_id}",
                 ),
@@ -130,6 +136,60 @@ def panel_view_kb(panel_id: int, *, is_active: bool) -> InlineKeyboardMarkup:
                 ),
             ],
             [InlineKeyboardButton(text=L.BACK, callback_data="pnl:hub")],
+        ]
+    )
+
+
+def panel_edit_menu_kb(panel_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.EDIT_PANEL_NAME,
+                    callback_data=f"pnl:pev:name:{panel_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.EDIT_PANEL_URL,
+                    callback_data=f"pnl:pev:url:{panel_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.EDIT_PANEL_TOKEN,
+                    callback_data=f"pnl:pev:token:{panel_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.EDIT_PANEL_SUB,
+                    callback_data=f"pnl:pev:sub:{panel_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.BACK, callback_data=f"pnl:view:{panel_id}"
+                ),
+            ],
+        ]
+    )
+
+
+def panel_edit_sub_kb(panel_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.CLEAR_SUB_URL,
+                    callback_data=f"pnl:sub_clear:{panel_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.CANCEL, callback_data=f"pnl:edit:{panel_id}"
+                ),
+            ],
         ]
     )
 

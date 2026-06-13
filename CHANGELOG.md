@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Admin **ویرایش پنل**: تغییر نام، آدرس (URL/پورت)، توکن API و آدرس ساب عمومی از صفحهٔ جزئیات پنل
+- تست اتصال قبل از ذخیرهٔ آدرس یا توکن؛ reload خودکار `PanelRegistry` پس از تغییر
+
 ## [1.2.0] - 2026-06-01
 
 ### Added

@@ -40,6 +40,12 @@ REGISTER_RESELLER = "✅ ثبت ریسلر"
 
 # Panel
 DELETE_PANEL = "🗑 حذف پنل"
+EDIT_PANEL = "✏️ ویرایش پنل"
+EDIT_PANEL_NAME = "🏷 نام پنل"
+EDIT_PANEL_URL = "🌐 آدرس پنل"
+EDIT_PANEL_TOKEN = "🔑 توکن API"
+EDIT_PANEL_SUB = "🔗 آدرس ساب عمومی"
+CLEAR_SUB_URL = "بدون آدرس ساب عمومی"
 LIST_INBOUNDS = "🔌 لیست اینباندها"
 SKIP_PUBLIC_SUB = "⏭ بدون آدرس ساب عمومی"
 

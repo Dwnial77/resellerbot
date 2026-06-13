@@ -39,6 +39,10 @@ class AddPanelStates(StatesGroup):
     confirm = State()
 
 
+class EditPanelStates(StatesGroup):
+    value = State()
+
+
 class SetPanelStates(StatesGroup):
     pick_reseller = State()
     pick_panel = State()
