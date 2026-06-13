@@ -34,6 +34,30 @@ def build_panel_link_fragment(email: str, total_bytes: int) -> str:
     return f"{email}-{volume}📊"
 
 
+def merge_panel_link_fragment(existing: str, email: str, total_bytes: int) -> str:
+    panel = build_panel_link_fragment(email, total_bytes)
+    existing = (existing or "").strip()
+    if not existing:
+        return panel
+    if email in existing:
+        return existing
+    if existing.startswith(("-", "_")):
+        return f"{panel}{existing}"
+    return f"{panel}-{existing}"
+
+
+def apply_panel_fragment_to_vless_link(
+    link: str, email: str, total_bytes: int
+) -> str:
+    existing = decode_link_fragment(link)
+    merged = merge_panel_link_fragment(existing, email, total_bytes)
+    if not merged.strip():
+        return link
+    parts = urlsplit(link)
+    encoded = quote(merged, safe="")
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, encoded))
+
+
 def apply_fragment_to_vless_link(link: str, fragment_text: str) -> str:
     if not fragment_text.strip():
         return link

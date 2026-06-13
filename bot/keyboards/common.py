@@ -1,8 +1,10 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 from bot.keyboards import labels as L
+from bot.utils.format_delivery import config_display_label
 from bot.utils.report_format import format_report_button_label, usage_percent_int
 from db.models import Panel, Reseller, ServiceTemplate
+from services.client_volume import MIN_CLIENT_VOLUME_GB
 from xui.client import VlessConfig
 
 _TELEGRAM_CALLBACK_MAX = 64
@@ -38,6 +40,7 @@ def admin_main_kb() -> ReplyKeyboardMarkup:
                 KeyboardButton(text=L.BOT_UPDATE),
             ],
             [
+                KeyboardButton(text=L.BROADCAST),
                 KeyboardButton(text=L.ADMIN_HELP),
             ],
         ],
@@ -87,6 +90,17 @@ def bot_update_confirm_kb() -> InlineKeyboardMarkup:
                     text=L.CANCEL,
                     callback_data="upd:cancel",
                 ),
+            ],
+        ]
+    )
+
+
+def broadcast_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=L.CONFIRM, callback_data="bc_confirm"),
+                InlineKeyboardButton(text=L.CANCEL, callback_data="bc_cancel"),
             ],
         ]
     )
@@ -985,9 +999,10 @@ def create_cancel_kb() -> InlineKeyboardMarkup:
 
 
 def template_picker_kb(templates: list[ServiceTemplate]) -> InlineKeyboardMarkup:
+    eligible = [tpl for tpl in templates if tpl.volume_gb >= MIN_CLIENT_VOLUME_GB]
     rows = [
         [InlineKeyboardButton(text=tpl.name, callback_data=f"tpl:{tpl.id}")]
-        for tpl in templates
+        for tpl in eligible
     ]
     rows.append(
         [InlineKeyboardButton(text=L.MANUAL_ENTRY, callback_data="create:manual")]
@@ -1134,6 +1149,50 @@ def add_traffic_confirm_kb(email: str) -> InlineKeyboardMarkup:
     )
 
 
+def reduce_traffic_volume_kb(email: str) -> InlineKeyboardMarkup:
+    volumes = (5, 10, 20, 50)
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"-{v} GB", callback_data=f"trafd_vol:{v}"
+            )
+            for v in volumes[:2]
+        ],
+        [
+            InlineKeyboardButton(
+                text=f"-{v} GB", callback_data=f"trafd_vol:{v}"
+            )
+            for v in volumes[2:]
+        ],
+        [
+            InlineKeyboardButton(
+                text=L.MANUAL_ENTRY, callback_data="trafd_custom"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text=L.CANCEL, callback_data=f"trafd_cancel:{email}"
+            ),
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def reduce_traffic_confirm_kb(email: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.CONFIRM, callback_data="trafd_confirm"
+                ),
+                InlineKeyboardButton(
+                    text=L.CANCEL, callback_data=f"trafd_cancel:{email}"
+                ),
+            ],
+        ]
+    )
+
+
 def delete_confirm_kb(email: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -1191,13 +1250,11 @@ def service_edit_kb(email: str) -> InlineKeyboardMarkup:
     )
 
 
-def _qr_button_label(cfg: VlessConfig, index: int) -> str:
-    if cfg.remark:
-        label = cfg.remark
-        if len(label) > 24:
-            label = label[:21] + "..."
-        return f"📲 QR {label}"
-    return f"📲 QR {index + 1}"
+def _qr_button_label(email: str, cfg: VlessConfig, index: int) -> str:
+    label = config_display_label(email, cfg.remark)
+    if len(label) > 24:
+        label = label[:21] + "..."
+    return f"📲 QR {label}"
 
 
 def _qr_callback_data(email: str, index: int) -> str:
@@ -1215,7 +1272,7 @@ def vless_qr_kb(email: str, configs: list[VlessConfig]) -> InlineKeyboardMarkup:
         except ValueError:
             continue
         rows.append(
-            [InlineKeyboardButton(text=_qr_button_label(cfg, i), callback_data=cb)]
+            [InlineKeyboardButton(text=_qr_button_label(email, cfg, i), callback_data=cb)]
         )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1238,8 +1295,13 @@ def service_detail_kb(email: str, *, enabled: bool = True) -> InlineKeyboardMark
                 InlineKeyboardButton(
                     text=L.CHANGE_EXPIRY, callback_data=f"exp:{email}"
                 ),
+            ],
+            [
                 InlineKeyboardButton(
                     text=L.ADD_TRAFFIC, callback_data=f"traf:{email}"
+                ),
+                InlineKeyboardButton(
+                    text=L.REDUCE_TRAFFIC, callback_data=f"trafd:{email}"
                 ),
             ],
             [

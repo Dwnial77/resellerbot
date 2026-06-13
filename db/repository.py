@@ -116,6 +116,14 @@ class ResellerRepository:
         result = await self.session.scalars(select(Reseller).order_by(Reseller.created_at))
         return list(result.all())
 
+    async def list_active(self) -> list[Reseller]:
+        result = await self.session.scalars(
+            select(Reseller)
+            .where(Reseller.is_active.is_(True))
+            .order_by(Reseller.created_at)
+        )
+        return list(result.all())
+
     async def upsert(
         self,
         telegram_id: int,
@@ -688,6 +696,14 @@ class ClientRepository:
         self, record: ClientRecord, delta: int
     ) -> ClientRecord:
         record.allocated_bytes += delta
+        await self.session.commit()
+        await self.session.refresh(record)
+        return record
+
+    async def subtract_allocated_bytes(
+        self, record: ClientRecord, delta: int
+    ) -> ClientRecord:
+        record.allocated_bytes = max(0, int(record.allocated_bytes or 0) - delta)
         await self.session.commit()
         await self.session.refresh(record)
         return record

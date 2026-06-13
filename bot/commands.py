@@ -21,6 +21,7 @@ ADMIN_COMMANDS = [
     BotCommand(command="bot_update", description="آپدیت ربات (GitHub یا ZIP)"),
     BotCommand(command="list_resellers", description="هاب مدیریت ریسلرها"),
     BotCommand(command="reports", description="گزارش ریسلرها"),
+    BotCommand(command="broadcast", description="پیام همگانی به ریسلرها"),
     BotCommand(command="set_quota", description="تغییر سقف حجم (آیدی و GB)"),
     BotCommand(command="set_max_clients", description="سقف تعداد سرویس"),
     BotCommand(command="clear_max_clients", description="حذف محدودیت تعداد سرویس"),

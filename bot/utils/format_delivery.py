@@ -1,5 +1,6 @@
 import html
 
+from bot.texts import fa as t
 from xui.client import ClientDelivery
 
 # Use HTML so VLESS URLs (underscores in flow, etc.) are not truncated by Markdown.
@@ -17,6 +18,21 @@ def _code(text: str) -> str:
     return f"<code>{html.escape(text)}</code>"
 
 
+def config_display_label(email: str, remark: str) -> str:
+    remark = (remark or "").strip()
+    if not remark:
+        return email
+    if email in remark:
+        return remark
+    return f"{email} — {remark}"
+
+
+def _delivery_guide(delivery: ClientDelivery) -> str:
+    if delivery.subscription_links:
+        return t.DELIVERY_GUIDE_WITH_SUB
+    return t.DELIVERY_GUIDE_NO_SUB
+
+
 def format_delivery_message(
     email: str,
     delivery: ClientDelivery,
@@ -29,8 +45,8 @@ def format_delivery_message(
     if delivery.vless_configs:
         parts: list[str] = []
         for cfg in delivery.vless_configs:
-            if cfg.remark:
-                parts.append(f"<b>{html.escape(cfg.remark)}</b>")
+            label = config_display_label(email, cfg.remark)
+            parts.append(f"<b>{html.escape(label)}</b>")
             parts.append(_code(cfg.link))
         vless_block = "\n\n".join(parts)
     else:
@@ -43,9 +59,10 @@ def format_delivery_message(
     else:
         sub_block = html.escape(NO_SUB_NO_SUBID)
 
-    return (
+    body = (
         f"{header}\n\n"
         f"ایمیل: {_code(email)}\n\n"
         f"کانفیگ VLESS:\n{vless_block}\n\n"
         f"لینک سابسکریپشن:\n{sub_block}"
     )
+    return f"{body}\n\n{_delivery_guide(delivery)}"

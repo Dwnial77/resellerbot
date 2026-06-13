@@ -15,6 +15,8 @@ from bot.keyboards.common import (
     create_pick_panel_kb,
     delete_confirm_kb,
     expiry_mode_kb,
+    reduce_traffic_confirm_kb,
+    reduce_traffic_volume_kb,
     reset_traffic_confirm_kb,
     service_detail_kb,
     service_edit_kb,
@@ -23,7 +25,13 @@ from bot.keyboards.common import (
     template_picker_kb,
     vless_qr_kb,
 )
-from bot.states import AddTrafficStates, CreateServiceStates, EditServiceStates, ExtendExpiryStates
+from bot.states import (
+    AddTrafficStates,
+    CreateServiceStates,
+    EditServiceStates,
+    ExtendExpiryStates,
+    ReduceTrafficStates,
+)
 from bot.texts import fa as t
 from bot.utils.edit_service import (
     InvalidEditInputError,
@@ -32,7 +40,11 @@ from bot.utils.edit_service import (
     validate_comment,
 )
 from bot.utils.expiry import InvalidExpiryInputError, parse_expiry_date
-from bot.utils.format_delivery import DELIVERY_PARSE_MODE, format_delivery_message
+from bot.utils.format_delivery import (
+    DELIVERY_PARSE_MODE,
+    config_display_label,
+    format_delivery_message,
+)
 from bot.utils.qr_vless import InvalidVlessQrError, generate_vless_qr_png
 from bot.utils.format_traffic import (
     client_traffic_used_bytes,
@@ -51,6 +63,7 @@ from db.repository import (
 )
 from bot.utils.reseller_welcome import accessible_panel_ids, format_reseller_welcome
 from db.session import get_session_factory
+from services.client_volume import MIN_CLIENT_VOLUME_GB, validate_client_volume_gb
 from services.quota import QuotaExceeded, QuotaService
 from services.reseller_labels import (
     InvalidClientSuffixError,
@@ -202,10 +215,22 @@ async def create_manual(
     if not reseller:
         await callback.answer(t.NOT_RESELLER, show_alert=True)
         return
-    await state.clear()
+    data = await state.get_data()
+    panel_id = data.get("panel_id")
+    if panel_id is None:
+        await state.clear()
+        if callback.message:
+            await _prompt_pick_panel_or_continue(
+                callback.message, state, reseller, panel_registry  # type: ignore[arg-type]
+            )
+        await callback.answer()
+        return
+    await state.set_state(CreateServiceStates.volume)
+    await state.update_data(panel_id=int(panel_id), template_name=None)
     if callback.message:
-        await _prompt_pick_panel_or_continue(
-            callback.message, state, reseller, panel_registry  # type: ignore[arg-type]
+        await callback.message.edit_text(  # type: ignore[union-attr]
+            t.CREATE_VOLUME_PROMPT,
+            reply_markup=create_cancel_kb(),
         )
     await callback.answer()
 
@@ -268,6 +293,9 @@ async def create_from_template(
     if not tpl:
         await callback.answer(t.TEMPLATE_NOT_FOUND, show_alert=True)
         return
+    if tpl.volume_gb < MIN_CLIENT_VOLUME_GB:
+        await callback.answer(t.CREATE_VOLUME_TOO_LOW, show_alert=True)
+        return
 
     if panel_id is None:
         await state.clear()
@@ -296,10 +324,16 @@ async def create_from_template(
 async def process_volume(message: Message, state: FSMContext) -> None:
     try:
         volume = float((message.text or "").replace(",", "."))
-        if volume <= 0:
-            raise ValueError
     except ValueError:
         await message.answer(t.INVALID_INPUT)
+        return
+    if volume <= 0:
+        await message.answer(t.INVALID_INPUT)
+        return
+    try:
+        validate_client_volume_gb(volume)
+    except ValueError:
+        await message.answer(t.CREATE_VOLUME_TOO_LOW)
         return
     await state.update_data(volume_gb=volume)
     await state.set_state(CreateServiceStates.expiry)
@@ -1033,6 +1067,253 @@ async def add_traffic_cancel(
     await callback.answer()
 
 
+async def _show_reduce_traffic_confirm(
+    message: Message,
+    state: FSMContext,
+    *,
+    user_id: int,
+    email: str,
+    volume_gb: float,
+    panel_registry: PanelRegistry,
+    edit: bool = True,
+) -> bool:
+    try:
+        async with open_service_context(
+            panel_registry, user_id, email
+        ) as (ctx, session):
+            quota = QuotaService(
+                ResellerRepository(session), ResellerPanelRepository(session)
+            )
+            st = await quota.status(ctx.reseller, ctx.record.panel_id)
+            current_gb = bytes_to_gb(ctx.record.allocated_bytes)
+            remaining_before = st.remaining_gb
+            traffic = await ctx.xui.get_traffic(email)
+            used_gb = bytes_to_gb(client_traffic_used_bytes(traffic))
+            if volume_gb > current_gb:
+                await message.answer(
+                    f"حجم درخواستی ({volume_gb} GB) بیشتر از سقف فعلی "
+                    f"({current_gb} GB) است."
+                )
+                return False
+            new_gb = current_gb - volume_gb
+            if new_gb < used_gb:
+                await message.answer(
+                    f"سقف جدید ({new_gb} GB) کمتر از مصرف فعلی ({used_gb} GB) است."
+                )
+                return False
+            text = t.REDUCE_TRAFFIC_CONFIRM.format(
+                email=email,
+                remove_gb=volume_gb,
+                current_gb=current_gb,
+                new_gb=new_gb,
+                used_gb=used_gb,
+                remaining_before_gb=remaining_before,
+                remaining_after_gb=remaining_before + volume_gb,
+            )
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_message(message, e)
+        return False
+    except XuiError as e:
+        await message.answer(str(e))
+        return False
+    await state.update_data(email=email, volume_gb=volume_gb)
+    await state.set_state(ReduceTrafficStates.confirm)
+    if edit:
+        await message.edit_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=reduce_traffic_confirm_kb(email),
+        )
+    else:
+        await message.answer(
+            text,
+            parse_mode="Markdown",
+            reply_markup=reduce_traffic_confirm_kb(email),
+        )
+    return True
+
+
+@router.callback_query(F.data.regexp(r"^trafd:[^:]+$"))
+async def reduce_traffic_menu(
+    callback: CallbackQuery,
+    state: FSMContext,
+    panel_registry: PanelRegistry,
+) -> None:
+    email = (callback.data or "").split(":", 1)[1]
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    await state.clear()
+    await state.update_data(email=email)
+    try:
+        async with open_service_context(
+            panel_registry, callback.from_user.id, email
+        ) as (ctx, session):
+            quota = QuotaService(
+                ResellerRepository(session), ResellerPanelRepository(session)
+            )
+            st = await quota.status(ctx.reseller, ctx.record.panel_id)
+            current_gb = bytes_to_gb(ctx.record.allocated_bytes)
+            traffic = await ctx.xui.get_traffic(email)
+            used_gb = bytes_to_gb(client_traffic_used_bytes(traffic))
+            text = t.REDUCE_TRAFFIC_CHOOSE.format(
+                email=email,
+                current_gb=current_gb,
+                used_gb=used_gb,
+                remaining_gb=st.remaining_gb,
+            )
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
+    except XuiError as e:
+        await callback.answer(str(e), show_alert=True)
+        return
+    await callback.message.edit_text(  # type: ignore[union-attr]
+        text,
+        parse_mode="Markdown",
+        reply_markup=reduce_traffic_volume_kb(email),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("trafd_vol:"))
+async def reduce_traffic_quick_volume(
+    callback: CallbackQuery,
+    state: FSMContext,
+    panel_registry: PanelRegistry,
+) -> None:
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    try:
+        volume_gb = float((callback.data or "").split(":", 1)[1])
+        if volume_gb <= 0:
+            raise ValueError
+    except (ValueError, IndexError):
+        await callback.answer(t.INVALID_INPUT, show_alert=True)
+        return
+    data = await state.get_data()
+    email = data.get("email")
+    if not email:
+        await callback.answer(t.INVALID_INPUT, show_alert=True)
+        return
+    ok = await _show_reduce_traffic_confirm(
+        callback.message,  # type: ignore[arg-type]
+        state,
+        user_id=callback.from_user.id,
+        email=email,
+        volume_gb=volume_gb,
+        panel_registry=panel_registry,
+    )
+    if ok:
+        await callback.answer()
+
+
+@router.callback_query(F.data == "trafd_custom")
+async def reduce_traffic_custom_start(
+    callback: CallbackQuery, state: FSMContext
+) -> None:
+    data = await state.get_data()
+    if not data.get("email"):
+        await callback.answer(t.INVALID_INPUT, show_alert=True)
+        return
+    await state.set_state(ReduceTrafficStates.volume)
+    await callback.message.edit_text(t.REDUCE_TRAFFIC_PROMPT)  # type: ignore[union-attr]
+    await callback.answer()
+
+
+@router.message(ReduceTrafficStates.volume)
+async def reduce_traffic_custom_volume(
+    message: Message, state: FSMContext, panel_registry: PanelRegistry
+) -> None:
+    if not message.from_user:
+        return
+    data = await state.get_data()
+    email = data.get("email")
+    if not email:
+        await state.clear()
+        await message.answer(t.INVALID_INPUT)
+        return
+    try:
+        volume_gb = float((message.text or "").replace(",", "."))
+        if volume_gb <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer(t.INVALID_INPUT)
+        return
+    await _show_reduce_traffic_confirm(
+        message,
+        state,
+        user_id=message.from_user.id,
+        email=email,
+        volume_gb=volume_gb,
+        panel_registry=panel_registry,
+        edit=False,
+    )
+
+
+@router.callback_query(F.data == "trafd_confirm")
+async def reduce_traffic_confirm(
+    callback: CallbackQuery,
+    state: FSMContext,
+    panel_registry: PanelRegistry,
+) -> None:
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    data = await state.get_data()
+    email = data.get("email")
+    volume_gb = data.get("volume_gb")
+    if not email or volume_gb is None:
+        await state.clear()
+        await callback.answer(t.INVALID_INPUT, show_alert=True)
+        return
+    await state.clear()
+    try:
+        async with open_service_context(
+            panel_registry, callback.from_user.id, email
+        ) as (ctx, session):
+            svc = ResellerService(session, ctx.xui)
+            try:
+                result = await svc.remove_service_traffic(
+                    ctx.reseller, email, float(volume_gb)
+                )
+            except XuiError as e:
+                await callback.answer(str(e), show_alert=True)
+                return
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
+    await callback.message.edit_text(  # type: ignore[union-attr]
+        t.REDUCE_TRAFFIC_OK.format(
+            new_total_gb=bytes_to_gb(result.new_total_bytes),
+            remaining_gb=bytes_to_gb(result.remaining_bytes),
+        )
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("trafd_cancel:"))
+async def reduce_traffic_cancel(
+    callback: CallbackQuery,
+    state: FSMContext,
+    panel_registry: PanelRegistry,
+) -> None:
+    email = (callback.data or "").split(":", 1)[1]
+    await state.clear()
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    try:
+        await _show_service_detail(
+            callback.message, email, callback.from_user.id, panel_registry  # type: ignore[arg-type]
+        )
+    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
+        await answer_resolve_callback(callback, e)
+        return
+    await callback.answer()
+
+
 @router.message(ExtendExpiryStates.add_days)
 async def expiry_process_add_days(
     message: Message, state: FSMContext, panel_registry: PanelRegistry
@@ -1203,8 +1484,9 @@ async def service_link(
     await callback.answer()
 
 
-def _qr_caption(remark: str) -> str:
-    remark_line = f"{remark}\n" if remark else ""
+def _qr_caption(email: str, remark: str) -> str:
+    label = config_display_label(email, remark)
+    remark_line = f"{label}\n" if label else ""
     return t.QR_CAPTION.format(remark_line=remark_line)
 
 
@@ -1277,7 +1559,7 @@ async def send_vless_qr(
         return
     await callback.message.answer_photo(  # type: ignore[union-attr]
         BufferedInputFile(png, filename="vless-qr.png"),
-        caption=_qr_caption(cfg.remark),
+        caption=_qr_caption(email, cfg.remark),
     )
     await callback.answer(t.QR_SENT)
 

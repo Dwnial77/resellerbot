@@ -73,7 +73,7 @@ def test_validate_create_rejects_over_remaining() -> None:
         reseller = _reseller(quota_gb=500, lifetime_gb=500)
         svc = _quota_service(reseller, quota_gb=500, lifetime_gb=500)
         with pytest.raises(QuotaExceeded, match="باقی"):
-            await QuotaService(svc.repo, svc.panel_repo).validate_create(reseller, 1, 10, [1])
+            await QuotaService(svc.repo, svc.panel_repo).validate_create(reseller, 1, 20, [1])
 
     asyncio.run(_run())
 

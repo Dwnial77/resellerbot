@@ -100,7 +100,7 @@ def test_validate_create_rejects_unassigned_panel() -> None:
         panel_repo.get = AsyncMock(return_value=None)
         svc = QuotaService(AsyncMock(), panel_repo)
         with pytest.raises(QuotaExceeded, match="اختصاص"):
-            await svc.validate_create(reseller, 9, 10, [1])
+            await svc.validate_create(reseller, 9, 20, [1])
 
     asyncio.run(_run())
 
@@ -161,7 +161,7 @@ def test_validate_create_rejects_inactive_assignment() -> None:
         inactive = _assignment(reseller, 1, is_active=False)
         svc = _quota_svc_mocks(reseller, inactive)
         with pytest.raises(QuotaExceeded, match="ممنوع"):
-            await svc.validate_create(reseller, 1, 10, [1])
+            await svc.validate_create(reseller, 1, 20, [1])
 
     asyncio.run(_run())
 

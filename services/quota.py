@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 from db.models import Reseller, ResellerPanel
 from db.repository import ResellerPanelRepository, ResellerRepository
+from services.client_volume import validate_client_volume_gb
 from xui.client import bytes_to_gb, gb_to_bytes
 
 
@@ -118,6 +119,11 @@ class QuotaService:
             if ib not in allowed:
                 raise QuotaExceeded(f"اینباند {ib} برای شما مجاز نیست.")
 
+        try:
+            validate_client_volume_gb(volume_gb)
+        except ValueError as e:
+            raise QuotaExceeded(str(e)) from e
+
         allocated = gb_to_bytes(volume_gb)
         if allocated <= 0:
             raise QuotaExceeded("حجم باید بزرگ‌تر از صفر باشد.")
@@ -151,3 +157,32 @@ class QuotaService:
                 f"({st.remaining_gb} GB) است."
             )
         return allocated
+
+    def validate_remove_traffic(
+        self,
+        reseller: Reseller,
+        volume_gb: float,
+        *,
+        current_allocated_bytes: int,
+        used_bytes: int,
+    ) -> int:
+        if not reseller.is_active:
+            raise QuotaExceeded("حساب ریسلر غیرفعال است.")
+
+        removed = gb_to_bytes(volume_gb)
+        if removed <= 0:
+            raise QuotaExceeded("حجم باید بزرگ‌تر از صفر باشد.")
+
+        if removed > current_allocated_bytes:
+            raise QuotaExceeded(
+                f"حجم درخواستی ({bytes_to_gb(removed)} GB) بیشتر از سقف فعلی "
+                f"({bytes_to_gb(current_allocated_bytes)} GB) است."
+            )
+
+        new_total = current_allocated_bytes - removed
+        if new_total < used_bytes:
+            raise QuotaExceeded(
+                f"سقف جدید ({bytes_to_gb(new_total)} GB) کمتر از مصرف فعلی "
+                f"({bytes_to_gb(used_bytes)} GB) است."
+            )
+        return removed

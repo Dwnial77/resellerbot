@@ -46,6 +46,13 @@ class AddTrafficResult:
     remaining_bytes: int
 
 
+@dataclass
+class RemoveTrafficResult:
+    removed_bytes: int
+    new_total_bytes: int
+    remaining_bytes: int
+
+
 def is_quota_refund_eligible(
     used_bytes: int, *, max_traffic_gb: float | None = None
 ) -> bool:
@@ -258,6 +265,38 @@ class ResellerService:
         st = await self.quota.status(reseller, panel_id)
         return AddTrafficResult(
             added_bytes=allocated,
+            new_total_bytes=record.allocated_bytes,
+            remaining_bytes=st.remaining_bytes,
+        )
+
+    async def remove_service_traffic(
+        self, reseller: Reseller, email: str, volume_gb: float
+    ) -> RemoveTrafficResult:
+        record = await self._get_owned_record(reseller, email)
+        panel_id = record.panel_id
+        try:
+            traffic = await self.xui.get_traffic(email)
+            used_bytes = client_traffic_used_bytes(traffic)
+            removed = self.quota.validate_remove_traffic(
+                reseller,
+                volume_gb,
+                current_allocated_bytes=record.allocated_bytes,
+                used_bytes=used_bytes,
+            )
+        except QuotaExceeded as e:
+            raise XuiError(str(e)) from e
+        await self.xui.subtract_client_traffic_bytes(email, removed)
+        record = await self.client_repo.subtract_allocated_bytes(record, removed)
+        await self.panel_repo.subtract_lifetime_allocated(
+            reseller.telegram_id, panel_id, removed
+        )
+        if panel_id == reseller.panel_id:
+            await self.reseller_repo.subtract_lifetime_allocated(
+                reseller.telegram_id, removed
+            )
+        st = await self.quota.status(reseller, panel_id)
+        return RemoveTrafficResult(
+            removed_bytes=removed,
             new_total_bytes=record.allocated_bytes,
             remaining_bytes=st.remaining_bytes,
         )

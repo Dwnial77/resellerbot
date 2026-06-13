@@ -19,6 +19,11 @@ class AddTrafficStates(StatesGroup):
     confirm = State()
 
 
+class ReduceTrafficStates(StatesGroup):
+    volume = State()
+    confirm = State()
+
+
 class EditServiceStates(StatesGroup):
     limit_ip = State()
     comment = State()
@@ -71,3 +76,8 @@ class AddResellerPanelStates(StatesGroup):
 
 class BotUpdateStates(StatesGroup):
     waiting_zip = State()
+
+
+class BroadcastStates(StatesGroup):
+    message = State()
+    confirm = State()

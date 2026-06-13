@@ -12,8 +12,7 @@ import httpx
 
 from xui.inbound_flow import resolve_flow_for_inbound_ids
 from xui.link_fragment import (
-    apply_fragment_to_vless_link,
-    build_panel_link_fragment,
+    apply_panel_fragment_to_vless_link,
     decode_link_fragment,
 )
 from xui.models import ClientCreateRequest, XuiClientPayload
@@ -435,6 +434,28 @@ class XuiClient:
             json={"emails": [email], "addDays": 0, "addBytes": add_bytes},
         )
 
+    async def subtract_client_traffic_bytes(
+        self, email: str, subtract_bytes: int
+    ) -> dict[str, Any]:
+        if subtract_bytes < 1:
+            raise XuiError("حجم کاهش باید بزرگ‌تر از صفر باشد.")
+        data = await self._request(
+            "POST",
+            "/panel/api/clients/bulkAdjust",
+            json={"emails": [email], "addDays": 0, "addBytes": -subtract_bytes},
+        )
+        obj = data.get("obj", data) if isinstance(data, dict) else data
+        if isinstance(obj, dict):
+            skipped = obj.get("skipped")
+            if isinstance(skipped, list):
+                for item in skipped:
+                    if isinstance(item, dict) and item.get("email") == email:
+                        reason = str(item.get("reason") or "unknown")
+                        raise XuiError(
+                            f"کاهش حجم در پنل انجام نشد ({reason})."
+                        )
+        return data
+
     async def set_client_expiry_ms(self, email: str, expiry_ms: int) -> dict[str, Any]:
         data = await self._request(
             "GET", f"/panel/api/clients/get/{quote(email, safe='')}"
@@ -488,14 +509,15 @@ class XuiClient:
     ) -> ClientDelivery:
         vless_configs = await self.get_links(email)
         if total_bytes is not None and total_bytes > 0:
-            fragment = build_panel_link_fragment(email, total_bytes)
             patched: list[VlessConfig] = []
             for cfg in vless_configs:
-                new_link = apply_fragment_to_vless_link(cfg.link, fragment)
+                new_link = apply_panel_fragment_to_vless_link(
+                    cfg.link, email, total_bytes
+                )
                 patched.append(
                     VlessConfig(
                         link=new_link,
-                        remark=cfg.remark or decode_link_fragment(new_link),
+                        remark=decode_link_fragment(new_link),
                     )
                 )
             vless_configs = patched

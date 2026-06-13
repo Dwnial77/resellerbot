@@ -86,9 +86,9 @@ def test_template_picker_kb() -> None:
     from bot.keyboards.labels import CANCEL, MANUAL_ENTRY
 
     kb = template_picker_kb(templates)
-    assert len(kb.inline_keyboard) == 4
-    assert kb.inline_keyboard[0][0].callback_data == "tpl:1"
-    assert kb.inline_keyboard[0][0].text == "10GB/30d"
+    assert len(kb.inline_keyboard) == 3
+    assert kb.inline_keyboard[0][0].callback_data == "tpl:2"
+    assert kb.inline_keyboard[0][0].text == "50GB/90d"
     assert kb.inline_keyboard[-2][0].callback_data == "create:manual"
     assert kb.inline_keyboard[-2][0].text == MANUAL_ENTRY
     assert kb.inline_keyboard[-1][0].callback_data == "create:cancel"

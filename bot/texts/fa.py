@@ -27,6 +27,27 @@ ADMIN_MENU = (
     "`/templates` — قالب‌های ساخت سرویس"
 )
 
+BROADCAST_PROMPT = (
+    "متن پیام همگانی را بنویسید.\n"
+    "این پیام به همه ریسلرهای فعال ارسال می‌شود."
+)
+BROADCAST_EMPTY = "متن پیام نمی‌تواند خالی باشد."
+BROADCAST_TOO_LONG = "متن پیام بیش از حد مجاز تلگرام (4096 کاراکتر) است."
+BROADCAST_NO_RECIPIENTS = "هیچ ریسلر فعالی برای ارسال پیام یافت نشد."
+BROADCAST_CONFIRM = (
+    "تأیید پیام همگانی\n"
+    "مخاطبان: {count} ریسلر فعال\n\n"
+    "متن:\n{preview}\n\n"
+    "ادامه می‌دهید؟"
+)
+BROADCAST_DONE = (
+    "پیام همگانی ارسال شد.\n"
+    "موفق: {sent}\n"
+    "ناموفق: {failed}\n"
+    "مسدود/بدون دسترسی: {blocked}"
+)
+BROADCAST_CANCELLED = "ارسال پیام همگانی لغو شد."
+
 RESELLER_ADDED = (
     "ریسلر {label} با سقف {quota_gb} GB ثبت شد.\n"
     "پنل: {panel_name} (#{panel_id})\n"
@@ -341,10 +362,14 @@ TEMPLATE_WIZARD_CONFIRM = (
 TEMPLATE_WIZARD_CANCELLED = "افزودن قالب لغو شد."
 
 CREATE_PICK_TEMPLATE = (
-    "یک قالب آماده انتخاب کنید، یا «ورود دستی» برای وارد کردن حجم و انقضا."
+    "یک قالب آماده انتخاب کنید، یا «ورود دستی» برای وارد کردن حجم و انقضا.\n"
+    "حداقل حجم سرویس: 20 GB."
 )
 CREATE_CANCELLED = "ساخت سرویس لغو شد."
-CREATE_VOLUME_PROMPT = "حجم سرویس را به گیگابایت وارد کنید (مثلاً 10):"
+CREATE_VOLUME_PROMPT = (
+    "حجم سرویس را به گیگابایت وارد کنید (حداقل 20 GB، مثلاً 20):"
+)
+CREATE_VOLUME_TOO_LOW = "حداقل حجم سرویس 20 GB است."
 CREATE_EXPIRY_PROMPT = "تعداد روز انقضا را وارد کنید (0 = نامحدود):"
 CREATE_CLIENT_NAME_PROMPT = (
     "نام سرویس را وارد کنید (فقط حروف انگلیسی، عدد، زیرخط و -)\n"
@@ -387,7 +412,34 @@ CREATE_SESSION_EXPIRED = (
 QR_CHOOSE = "کانفیگ VLESS را برای دریافت QR انتخاب کنید:"
 QR_NOT_AVAILABLE = "کانفیگ VLESS برای این سرویس یافت نشد."
 QR_SENT = "QR ارسال شد."
-QR_CAPTION = "{remark_line}اسکن در کلاینت VPN"
+QR_CAPTION = (
+    "{remark_line}اسکن در v2rayNG / Hiddify — "
+    "برای بروزرسانی خودکار از لینک ساب استفاده کنید."
+)
+DELIVERY_GUIDE_WITH_SUB = (
+    "━━━━━━━━━━━━━━━━\n"
+    "📌 راهنمای استفاده (برای مشتری)\n\n"
+    "✅ روش پیشنهادی — لینک ساب\n"
+    "با لینک ساب بالا، لیست کانفیگ‌ها خودکار بروز می‌شود. "
+    "اگر سرور یا اینباند عوض شد، فقط در اپ VPN دکمه بروزرسانی (Update) را بزنید.\n\n"
+    "مراحل:\n"
+    "۱) لینک ساب بالا را کپی کنید\n"
+    "۲) در اپ VPN اضافه کنید:\n"
+    "• v2rayNG (اندروید): + → Subscription → Paste URL → ✓ → Update\n"
+    "• Hiddify: + → Add subscription / From clipboard → Paste → Update\n"
+    "• v2rayN (ویندوز): Subscription group → Add → Paste URL → Update subscription\n"
+    "۳) یک بار Update بزنید تا کانفیگ‌ها لود شوند\n\n"
+    "📲 روش جایگزین — QR یا کانفیگ تکی\n"
+    "هر کانفیگ VLESS را جدا کپی کنید یا QR آن را اسکن کنید (دکمه «QR کانفیگ»). "
+    "این روش خودکار بروز نمی‌شود؛ با تغییر سرور باید لینک جدید بگیرید."
+)
+DELIVERY_GUIDE_NO_SUB = (
+    "━━━━━━━━━━━━━━━━\n"
+    "📌 راهنمای استفاده (برای مشتری)\n\n"
+    "لینک ساب در دسترس نیست. هر کانفیگ VLESS را جدا کپی کنید "
+    "یا QR آن را اسکن کنید (دکمه «QR کانفیگ»).\n\n"
+    "با تغییر تنظیمات سرور، لینک جدید را از فروشنده بگیرید."
+)
 
 USAGE_ALERT_RESELLER = (
     "اعلان\n\n"
@@ -442,6 +494,30 @@ ADD_TRAFFIC_CONFIRM = (
 )
 ADD_TRAFFIC_OK = (
     "ترافیک اضافه شد.\n"
+    "سقف جدید سرویس: {new_total_gb} GB\n"
+    "باقی‌مانده سهمیه: {remaining_gb} GB"
+)
+REDUCE_TRAFFIC_CHOOSE = (
+    "سرویس: `{email}`\n"
+    "سقف فعلی: {current_gb} GB\n"
+    "مصرف فعلی: {used_gb} GB\n"
+    "باقی‌مانده سهمیه: {remaining_gb} GB\n\n"
+    "چند گیگابایت از این سرویس کم شود؟"
+)
+REDUCE_TRAFFIC_PROMPT = (
+    "حجم کاهش را به گیگابایت وارد کنید (مثلاً 10):"
+)
+REDUCE_TRAFFIC_CONFIRM = (
+    "تأیید کاهش ترافیک:\n"
+    "سرویس: `{email}`\n"
+    "کاهش: {remove_gb} GB\n"
+    "سقف فعلی: {current_gb} GB → جدید: {new_gb} GB\n"
+    "مصرف فعلی: {used_gb} GB\n"
+    "باقی‌مانده سهمیه: {remaining_before_gb} → {remaining_after_gb} GB\n\n"
+    "ادامه می‌دهید؟"
+)
+REDUCE_TRAFFIC_OK = (
+    "ترافیک کاهش یافت.\n"
     "سقف جدید سرویس: {new_total_gb} GB\n"
     "باقی‌مانده سهمیه: {remaining_gb} GB"
 )
