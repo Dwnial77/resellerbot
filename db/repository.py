@@ -209,8 +209,6 @@ class ResellerRepository:
                 is_active=True,
             )
         else:
-            assignment.quota_bytes = row.quota_bytes
-            assignment.lifetime_allocated_bytes = row.lifetime_allocated_bytes
             assignment.allowed_inbound_ids = row.allowed_inbound_ids
             assignment.attach_inbound_ids = row.attach_inbound_ids
             assignment.max_clients = row.max_clients
@@ -345,6 +343,19 @@ class ResellerRepository:
         await self._sync_primary_panel_assignment(row)
         return row
 
+    async def subtract_quota_bytes(
+        self, telegram_id: int, delta: int
+    ) -> Reseller | None:
+        row = await self.get(telegram_id)
+        if not row:
+            return None
+        lifetime = int(row.lifetime_allocated_bytes or 0)
+        row.quota_bytes = max(lifetime, int(row.quota_bytes or 0) - delta)
+        await self.session.commit()
+        await self.session.refresh(row)
+        await self._sync_primary_panel_assignment(row)
+        return row
+
     async def client_count(self, telegram_id: int) -> int:
         result = await self.session.scalar(
             select(func.count()).select_from(ClientRecord).where(
@@ -405,8 +416,6 @@ class ResellerRepository:
         primary = await panel_repo.get(telegram_id, row.panel_id)
         if not primary:
             return
-        row.quota_bytes = primary.quota_bytes
-        row.lifetime_allocated_bytes = primary.lifetime_allocated_bytes
         row.allowed_inbound_ids = primary.allowed_inbound_ids
         row.attach_inbound_ids = primary.attach_inbound_ids
         row.max_clients = primary.max_clients

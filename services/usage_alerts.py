@@ -11,7 +11,6 @@ from bot.utils.format_traffic import format_bytes, normalize_traffic_data
 from db.models import ClientRecord, Reseller
 from db.repository import (
     ClientRepository,
-    PanelRepository,
     ResellerPanelRepository,
     ResellerRepository,
     UsageAlertRepository,
@@ -24,10 +23,6 @@ RESET_BELOW_PERCENT = 75
 
 RESELLER_QUOTA = "reseller_quota"
 CLIENT_TRAFFIC = "client_traffic"
-
-
-def _panel_quota_key(panel_id: int) -> str:
-    return f"panel:{panel_id}"
 
 
 @dataclass
@@ -82,44 +77,35 @@ class UsageAlertService:
 
     async def _check_reseller_quotas(self, reseller: Reseller) -> list[AlertToSend]:
         alerts: list[AlertToSend] = []
-        panel_repo = PanelRepository(self.session)
-        assignments = await self.panel_assign_repo.list_for_reseller(
-            reseller.telegram_id
+        if int(reseller.quota_bytes or 0) <= 0:
+            return alerts
+        st = await self.quota.global_status(reseller)
+        percent = usage_percent(st.used_bytes, st.quota_bytes)
+        if percent is None:
+            return alerts
+        sent = await self.alert_repo.get_sent_thresholds(
+            reseller.telegram_id, RESELLER_QUOTA, client_email=""
         )
-        for assignment in assignments:
-            if not assignment.is_active or assignment.quota_bytes <= 0:
-                continue
-            st = await self.quota.status(reseller, assignment.panel_id)
-            percent = usage_percent(st.used_bytes, st.quota_bytes)
-            if percent is None:
-                continue
-            key = _panel_quota_key(assignment.panel_id)
-            sent = await self.alert_repo.get_sent_thresholds(
-                reseller.telegram_id, RESELLER_QUOTA, client_email=key
+        if percent < RESET_BELOW_PERCENT:
+            await self.alert_repo.clear(
+                reseller.telegram_id, RESELLER_QUOTA, client_email=""
             )
-            if percent < RESET_BELOW_PERCENT:
-                await self.alert_repo.clear(
-                    reseller.telegram_id, RESELLER_QUOTA, client_email=key
+            return alerts
+        for threshold in pending_thresholds(percent, sent):
+            alerts.append(
+                AlertToSend(
+                    reseller_tg_id=reseller.telegram_id,
+                    alert_kind=RESELLER_QUOTA,
+                    threshold_percent=threshold,
+                    client_email="",
+                    message=t.USAGE_ALERT_RESELLER.format(
+                        threshold=threshold,
+                        used_gb=st.used_gb,
+                        quota_gb=st.quota_gb,
+                        percent=percent,
+                    ),
                 )
-                continue
-            panel = await panel_repo.get(assignment.panel_id)
-            panel_name = panel.name if panel else f"#{assignment.panel_id}"
-            for threshold in pending_thresholds(percent, sent):
-                alerts.append(
-                    AlertToSend(
-                        reseller_tg_id=reseller.telegram_id,
-                        alert_kind=RESELLER_QUOTA,
-                        threshold_percent=threshold,
-                        client_email=key,
-                        message=t.USAGE_ALERT_RESELLER_PANEL.format(
-                            threshold=threshold,
-                            panel_name=panel_name,
-                            used_gb=st.used_gb,
-                            quota_gb=st.quota_gb,
-                            percent=percent,
-                        ),
-                    )
-                )
+            )
         return alerts
 
     async def _check_clients(self, reseller: Reseller) -> list[AlertToSend]:

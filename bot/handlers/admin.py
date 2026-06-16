@@ -22,6 +22,7 @@ from services.reseller_edit import (
     apply_max_clients,
     apply_quota,
     apply_reset_quota_usage,
+    apply_subtract_quota,
     clear_max_clients_limit,
 )
 from xui.client import gb_to_bytes
@@ -182,6 +183,9 @@ async def set_quota(message: Message) -> None:
         except ResellerNotFoundError:
             await message.answer("ریسلر یافت نشد.")
             return
+        except ValueError as e:
+            await message.answer(str(e))
+            return
     await message.answer(result.message_text)
 
 
@@ -203,6 +207,33 @@ async def add_quota_cmd(message: Message) -> None:
     async with get_session_factory()() as session:
         try:
             result = await apply_add_quota(session, tg_id, add_gb)
+        except ResellerNotFoundError:
+            await message.answer("ریسلر یافت نشد.")
+            return
+        except ValueError as e:
+            await message.answer(str(e))
+            return
+    await message.answer(result.message_text)
+
+
+@router.message(Command("subtract_quota"))
+async def subtract_quota_cmd(message: Message) -> None:
+    if not _is_admin(message.from_user.id if message.from_user else None):
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 3:
+        await message.answer("فرمت: /subtract_quota TELEGRAM_ID SUBTRACT_GB")
+        return
+    try:
+        tg_id = int(parts[1])
+        subtract_gb = float(parts[2].replace(",", "."))
+    except ValueError:
+        await message.answer(t.INVALID_INPUT)
+        return
+
+    async with get_session_factory()() as session:
+        try:
+            result = await apply_subtract_quota(session, tg_id, subtract_gb)
         except ResellerNotFoundError:
             await message.answer("ریسلر یافت نشد.")
             return

@@ -42,6 +42,10 @@ def _assignment(reseller: Reseller, *, quota_gb: float, lifetime_gb: float) -> R
 def _quota_svc(reseller: Reseller) -> QuotaService:
     assignment = _assignment(reseller, quota_gb=500, lifetime_gb=100)
     repo = AsyncMock()
+    repo.active_bytes = AsyncMock(return_value=gb_to_bytes(50))
+    repo.client_count = AsyncMock(return_value=1)
+    repo.active_bytes_on_panel = AsyncMock(return_value=gb_to_bytes(50))
+    repo.client_count_on_panel = AsyncMock(return_value=1)
     panel_repo = AsyncMock()
     panel_repo.get = AsyncMock(return_value=assignment)
     return QuotaService(repo, panel_repo)
@@ -143,9 +147,7 @@ def test_remove_service_traffic_updates_panel_and_db() -> None:
             record.email, gb_to_bytes(10)
         )
         client_repo.subtract_allocated_bytes.assert_awaited_once()
-        panel_repo.subtract_lifetime_allocated.assert_awaited_once_with(
-            reseller.telegram_id, 1, gb_to_bytes(10)
-        )
+        panel_repo.subtract_lifetime_allocated.assert_not_called()
         reseller_repo.subtract_lifetime_allocated.assert_awaited_once_with(
             reseller.telegram_id, gb_to_bytes(10)
         )

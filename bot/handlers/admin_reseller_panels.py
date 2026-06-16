@@ -9,18 +9,15 @@ from aiogram.types import CallbackQuery, Message
 from bot.handlers.admin import _is_admin
 from bot.handlers.admin_resellers import (
     _finish_edit_view,
-    _reseller_for_edit,
 )
 from bot.keyboards.common import (
     reseller_panel_add_pick_kb,
     reseller_panel_assignment_kb,
-    reseller_panel_edit_menu_kb,
     reseller_panel_list_kb,
     reseller_panel_remove_confirm_kb,
     reseller_wizard_inbounds_kb,
-    reseller_wizard_quota_kb,
 )
-from bot.states import AddResellerPanelStates, EditResellerStates
+from bot.states import AddResellerPanelStates
 from bot.texts import fa as t
 from db.repository import PanelRepository, ResellerPanelRepository, ResellerRepository
 from db.session import get_session_factory
@@ -32,12 +29,9 @@ from services.reseller_panel_edit import (
     PanelNotFoundError,
     ResellerNotFoundError,
     apply_add_panel_assignment,
-    apply_panel_add_quota,
     apply_panel_allowed_inbounds,
     apply_panel_attach_inbounds,
     apply_panel_max_clients,
-    apply_panel_quota,
-    apply_panel_reset_quota_usage,
     apply_panel_toggle_create_allowed,
     apply_remove_panel_assignment,
     apply_set_default_panel,
@@ -71,6 +65,9 @@ async def _panel_assignment_content(
         st = await QuotaService(
             ResellerRepository(session), ResellerPanelRepository(session)
         ).status(reseller, panel_id)
+        global_st = await QuotaService(
+            ResellerRepository(session), ResellerPanelRepository(session)
+        ).global_status(reseller)
         from db.repository import (
             format_inbound_summary_for_assignment,
             inbound_ids_from_json,
@@ -85,10 +82,9 @@ async def _panel_assignment_content(
             panel_name=panel_name + default_mark,
             panel_id=panel_id,
             status="ساخت: مجاز" if assignment.is_active else "ساخت: ممنوع",
-            quota_gb=st.quota_gb,
+            quota_gb=global_st.quota_gb,
             active_gb=st.active_gb,
-            lifetime_gb=st.lifetime_gb,
-            remaining_gb=st.remaining_gb,
+            remaining_gb=global_st.remaining_gb,
             client_count=st.client_count,
             max_clients=st.max_clients if st.max_clients is not None else "نامحدود",
             allowed_inbounds=", ".join(str(i) for i in allowed),
@@ -120,20 +116,24 @@ async def reseller_panels_list(callback: CallbackQuery, state: FSMContext) -> No
             return
         assignments = await ResellerPanelRepository(session).list_for_reseller(tg_id)
         panel_repo = PanelRepository(session)
+        quota_svc = QuotaService(
+            ResellerRepository(session), ResellerPanelRepository(session)
+        )
+        global_st = await quota_svc.global_status(reseller)
         lines = [t.RESELLER_PANELS_HEADER.format(label=reseller_label(reseller))]
+        lines.append(
+            f"سهمیه کل: {global_st.remaining_gb:.1f}/{global_st.quota_gb:.1f} GB"
+        )
         panel_labels: dict[int, str] = {}
         for a in assignments:
             p = await panel_repo.get(a.panel_id)
             name = p.name if p else f"#{a.panel_id}"
             panel_labels[a.panel_id] = name
-            st = await QuotaService(
-                ResellerRepository(session), ResellerPanelRepository(session)
-            ).status(reseller, a.panel_id)
+            st = await quota_svc.status(reseller, a.panel_id)
             default = " *" if reseller.panel_id == a.panel_id else ""
             blocked = " ⏸" if not a.is_active else ""
             lines.append(
-                f"• {name}{default}{blocked}: {st.remaining_gb:.1f}/{st.quota_gb:.1f} GB — "
-                f"{st.client_count} سرویس"
+                f"• {name}{default}{blocked}: {st.client_count} سرویس"
             )
     await callback.message.edit_text(  # type: ignore[union-attr]
         "\n".join(lines),
@@ -169,20 +169,10 @@ async def reseller_panel_edit_menu(callback: CallbackQuery, state: FSMContext) -
         return
     tg_id, panel_id = _parse_tg_panel(callback.data, "rsl:pedit:")
     await state.clear()
-    reseller = await _reseller_for_edit(tg_id)
-    if not reseller:
-        await callback.answer("ریسلر یافت نشد.", show_alert=True)
-        return
-    async with get_session_factory()() as session:
-        panel = await PanelRepository(session).get(panel_id)
-    panel_name = panel.name if panel else f"#{panel_id}"
-    await callback.message.edit_text(  # type: ignore[union-attr]
-        t.RESELLER_PANEL_EDIT_MENU.format(
-            label=reseller_label(reseller), panel_name=panel_name
-        ),
-        reply_markup=reseller_panel_edit_menu_kb(tg_id, panel_id),
+    await callback.answer(
+        "سقف حجم از منوی ویرایش ریسلر (سطح کل) مدیریت می‌شود.",
+        show_alert=True,
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.regexp(r"^rsl:ptoggle:\d+:\d+$"))
@@ -309,30 +299,8 @@ async def reseller_panel_add_pick_panel(
     panel_id = int(parts[2])
     tg_id = int(parts[3])
     await state.update_data(reseller_tg_id=tg_id, panel_id=panel_id)
-    await state.set_state(AddResellerPanelStates.quota)
-    await callback.message.edit_text(  # type: ignore[union-attr]
-        t.RESELLER_PANEL_ADD_QUOTA,
-        reply_markup=reseller_wizard_quota_kb(),
-    )
-    await callback.answer()
-
-
-@router.callback_query(AddResellerPanelStates.quota, F.data.startswith("rsl:quota:"))
-async def reseller_panel_add_quota(
-    callback: CallbackQuery, state: FSMContext, panel_registry: PanelRegistry
-) -> None:
-    if not callback.data or not callback.message:
-        await callback.answer()
-        return
-    quota_gb = float(callback.data.split(":", 2)[2])
-    data = await state.get_data()
-    panel_id = data.get("panel_id")
-    if panel_id is None:
-        await callback.answer(t.INVALID_INPUT, show_alert=True)
-        return
-    await state.update_data(quota_gb=quota_gb)
     try:
-        xui = panel_registry.get_client(int(panel_id))
+        xui = panel_registry.get_client(panel_id)
     except PanelNotFoundError:
         await callback.answer(t.PANEL_NOT_LOADED, show_alert=True)
         return
@@ -390,9 +358,8 @@ async def reseller_panel_add_finish(callback: CallbackQuery, state: FSMContext) 
     data = await state.get_data()
     tg_id = data.get("reseller_tg_id")
     panel_id = data.get("panel_id")
-    quota_gb = data.get("quota_gb")
     selected = data.get("selected_inbounds", [])
-    if not tg_id or panel_id is None or quota_gb is None or not selected:
+    if not tg_id or panel_id is None or not selected:
         await callback.answer(t.INVALID_INPUT, show_alert=True)
         return
     async with get_session_factory()() as session:
@@ -401,7 +368,6 @@ async def reseller_panel_add_finish(callback: CallbackQuery, state: FSMContext) 
                 session,
                 int(tg_id),
                 int(panel_id),
-                float(quota_gb),
                 [int(x) for x in selected],
             )
         except (ResellerNotFoundError, PanelNotFoundError, ValueError) as e:
@@ -412,107 +378,4 @@ async def reseller_panel_add_finish(callback: CallbackQuery, state: FSMContext) 
     await callback.answer()
 
 
-# Panel-scoped edit handlers (quota, inbounds, ...)
-@router.callback_query(F.data.regexp(r"^rsl:pev:quota:\d+:\d+$"))
-async def panel_edit_start_quota(callback: CallbackQuery, state: FSMContext) -> None:
-    if not _is_admin(callback.from_user.id if callback.from_user else None):
-        return
-    if not callback.data or not callback.message:
-        await callback.answer()
-        return
-    tg_id, panel_id = _parse_tg_panel(callback.data, "rsl:pev:quota:")
-    await state.set_state(EditResellerStates.value)
-    await state.update_data(
-        reseller_tg_id=tg_id, panel_id=panel_id, edit_kind="quota"
-    )
-    await callback.message.edit_text(t.RESELLER_EDIT_QUOTA_PROMPT.format(label=str(tg_id)))
-    await callback.answer()
-
-
-@router.callback_query(F.data.regexp(r"^rsl:peq:\d+(\.\d+)?:\d+:\d+$"))
-async def panel_edit_quota_quick(callback: CallbackQuery, state: FSMContext) -> None:
-    if not _is_admin(callback.from_user.id if callback.from_user else None):
-        return
-    if not callback.data or not callback.message:
-        await callback.answer()
-        return
-    parts = callback.data.split(":")
-    quota_gb = float(parts[2])
-    tg_id, panel_id = int(parts[3]), int(parts[4])
-    async with get_session_factory()() as session:
-        try:
-            result = await apply_panel_quota(session, tg_id, panel_id, quota_gb)
-        except (ResellerNotFoundError, AssignmentNotFoundError):
-            await callback.answer("یافت نشد.", show_alert=True)
-            return
-    content = await _panel_assignment_content(tg_id, panel_id)
-    if content:
-        text, markup = content
-        await callback.message.edit_text(  # type: ignore[union-attr]
-            f"{result.message_text}\n\n{text}", reply_markup=markup
-        )
-    await callback.answer()
-
-
-@router.callback_query(F.data.regexp(r"^rsl:pev:addq:\d+:\d+$"))
-async def panel_edit_start_add_quota(callback: CallbackQuery, state: FSMContext) -> None:
-    if not _is_admin(callback.from_user.id if callback.from_user else None):
-        return
-    if not callback.data or not callback.message:
-        await callback.answer()
-        return
-    tg_id, panel_id = _parse_tg_panel(callback.data, "rsl:pev:addq:")
-    await state.set_state(EditResellerStates.value)
-    await state.update_data(
-        reseller_tg_id=tg_id, panel_id=panel_id, edit_kind="add_quota"
-    )
-    await callback.message.edit_text(t.RESELLER_EDIT_ADD_QUOTA_PROMPT.format(label=str(tg_id)))
-    await callback.answer()
-
-
-@router.callback_query(F.data.regexp(r"^rsl:peaq:\d+(\.\d+)?:\d+:\d+$"))
-async def panel_edit_add_quota_quick(callback: CallbackQuery, state: FSMContext) -> None:
-    if not _is_admin(callback.from_user.id if callback.from_user else None):
-        return
-    if not callback.data or not callback.message:
-        await callback.answer()
-        return
-    parts = callback.data.split(":")
-    add_gb = float(parts[2])
-    tg_id, panel_id = int(parts[3]), int(parts[4])
-    async with get_session_factory()() as session:
-        try:
-            result = await apply_panel_add_quota(session, tg_id, panel_id, add_gb)
-        except (ResellerNotFoundError, AssignmentNotFoundError, ValueError) as e:
-            await callback.answer(str(e)[:200], show_alert=True)
-            return
-    content = await _panel_assignment_content(tg_id, panel_id)
-    if content:
-        text, markup = content
-        await callback.message.edit_text(  # type: ignore[union-attr]
-            f"{result.message_text}\n\n{text}", reply_markup=markup
-        )
-    await callback.answer()
-
-
-@router.callback_query(F.data.regexp(r"^rsl:pev:resetu:\d+:\d+$"))
-async def panel_edit_reset_quota(callback: CallbackQuery, state: FSMContext) -> None:
-    if not _is_admin(callback.from_user.id if callback.from_user else None):
-        return
-    if not callback.data or not callback.message:
-        await callback.answer()
-        return
-    tg_id, panel_id = _parse_tg_panel(callback.data, "rsl:pev:resetu:")
-    async with get_session_factory()() as session:
-        try:
-            result = await apply_panel_reset_quota_usage(session, tg_id, panel_id)
-        except (ResellerNotFoundError, AssignmentNotFoundError):
-            await callback.answer("یافت نشد.", show_alert=True)
-            return
-    content = await _panel_assignment_content(tg_id, panel_id)
-    if content:
-        text, markup = content
-        await callback.message.edit_text(  # type: ignore[union-attr]
-            f"{result.message_text}\n\n{text}", reply_markup=markup
-        )
-    await callback.answer()
+# Panel-scoped edit handlers (inbounds, max_clients, ...)

@@ -16,6 +16,7 @@ from bot.keyboards.common import (
     reseller_edit_max_clients_kb,
     reseller_edit_menu_kb,
     reseller_edit_quota_kb,
+    reseller_edit_subtract_quota_kb,
     reseller_reset_quota_confirm_kb,
     reseller_view_kb,
     reseller_wizard_confirm_kb,
@@ -45,6 +46,7 @@ from services.reseller_edit import (
     apply_max_clients,
     apply_quota,
     apply_reset_quota_usage,
+    apply_subtract_quota,
     clear_max_clients_limit,
 )
 from services.reseller_labels import (
@@ -106,6 +108,7 @@ async def _reseller_view_content(
         panel_name = panel.name if panel else f"#{reseller.panel_id}"
         assignments = await panel_assign_repo.list_for_reseller(telegram_id)
         quota_svc = QuotaService(repo, panel_assign_repo)
+        global_st = await quota_svc.global_status(reseller)
         panel_lines: list[str] = []
         client_count = 0
         for a in assignments:
@@ -115,10 +118,14 @@ async def _reseller_view_content(
             client_count += st.client_count
             mark = " *" if a.panel_id == reseller.panel_id else ""
             panel_lines.append(
-                f"• {pname}{mark}: {st.remaining_gb:.1f}/{st.quota_gb:.1f} GB — "
-                f"{st.client_count} سرویس"
+                f"• {pname}{mark}: {st.client_count} سرویس | "
+                f"تخصیص: {st.active_gb:.1f} GB"
             )
         panels_summary = "\n".join(panel_lines) if panel_lines else "—"
+        panels_summary = (
+            f"سهمیه کل: {global_st.remaining_gb:.1f}/{global_st.quota_gb:.1f} GB\n"
+            f"{panels_summary}"
+        )
 
     text = t.RESELLER_VIEW_DETAIL.format(
         label=reseller_label(reseller),
@@ -728,6 +735,50 @@ async def edit_add_quota_quick(callback: CallbackQuery, state: FSMContext) -> No
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("rsl:ev:subq:"))
+async def edit_start_subtract_quota(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id if callback.from_user else None):
+        return
+    if not callback.data or not callback.message:
+        await callback.answer()
+        return
+    tg_id = int(callback.data.split(":", 3)[3])
+    reseller = await _reseller_for_edit(tg_id)
+    if not reseller:
+        await callback.answer("ریسلر یافت نشد.", show_alert=True)
+        return
+    await state.set_state(EditResellerStates.value)
+    await state.update_data(reseller_tg_id=tg_id, edit_kind="subtract_quota")
+    await callback.message.edit_text(
+        t.RESELLER_EDIT_SUBTRACT_QUOTA_PROMPT.format(label=reseller_label(reseller)),
+        reply_markup=reseller_edit_subtract_quota_kb(tg_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rsl:esq:"))
+async def edit_subtract_quota_quick(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id if callback.from_user else None):
+        return
+    if not callback.data or not callback.message:
+        await callback.answer()
+        return
+    parts = callback.data.split(":")
+    subtract_gb = float(parts[2])
+    tg_id = int(parts[3])
+    async with get_session_factory()() as session:
+        try:
+            result = await apply_subtract_quota(session, tg_id, subtract_gb)
+        except ResellerNotFoundError:
+            await callback.answer("ریسلر یافت نشد.", show_alert=True)
+            return
+        except ValueError as e:
+            await callback.answer(str(e)[:200], show_alert=True)
+            return
+    await _finish_edit_view(callback.message, state, tg_id, result.message_text)  # type: ignore[arg-type]
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("rsl:ev:resetu:"))
 async def edit_start_reset_quota(callback: CallbackQuery, state: FSMContext) -> None:
     if not _is_admin(callback.from_user.id if callback.from_user else None):
@@ -1027,26 +1078,17 @@ async def edit_value_text(message: Message, state: FSMContext) -> None:
                 quota_gb = float(text_in.replace(",", "."))
                 if quota_gb <= 0:
                     raise ValueError
-                if panel_id is not None:
-                    from services.reseller_panel_edit import apply_panel_quota
-
-                    result = await apply_panel_quota(
-                        session, tg_id, int(panel_id), quota_gb
-                    )
-                else:
-                    result = await apply_quota(session, tg_id, quota_gb)
+                result = await apply_quota(session, tg_id, quota_gb)
             elif kind == "add_quota":
                 add_gb = float(text_in.replace(",", "."))
                 if add_gb <= 0:
                     raise ValueError
-                if panel_id is not None:
-                    from services.reseller_panel_edit import apply_panel_add_quota
-
-                    result = await apply_panel_add_quota(
-                        session, tg_id, int(panel_id), add_gb
-                    )
-                else:
-                    result = await apply_add_quota(session, tg_id, add_gb)
+                result = await apply_add_quota(session, tg_id, add_gb)
+            elif kind == "subtract_quota":
+                subtract_gb = float(text_in.replace(",", "."))
+                if subtract_gb <= 0:
+                    raise ValueError
+                result = await apply_subtract_quota(session, tg_id, subtract_gb)
             elif kind == "name":
                 display_name = normalize_display_name(text_in)
                 result = await apply_display_name(session, tg_id, display_name)

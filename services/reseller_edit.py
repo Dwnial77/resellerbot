@@ -31,7 +31,14 @@ async def apply_quota(
     row = await repo.get(telegram_id)
     if not row:
         raise ResellerNotFoundError()
-    row = await repo.upsert(telegram_id, gb_to_bytes(quota_gb))
+    new_quota = gb_to_bytes(quota_gb)
+    lifetime = int(row.lifetime_allocated_bytes or 0)
+    if new_quota < lifetime:
+        raise ValueError(
+            f"سقف جدید ({quota_gb} GB) کمتر از مصرف/تخصیص فعلی "
+            f"({bytes_to_gb(lifetime)} GB) است."
+        )
+    row = await repo.upsert(telegram_id, new_quota)
     return EditResult(
         reseller=row,
         message_text=t.QUOTA_UPDATED.format(
@@ -61,6 +68,35 @@ async def apply_add_quota(
     )
 
 
+async def apply_subtract_quota(
+    session: AsyncSession, telegram_id: int, subtract_gb: float
+) -> EditResult:
+    repo = ResellerRepository(session)
+    row = await repo.get(telegram_id)
+    if not row:
+        raise ResellerNotFoundError()
+    if subtract_gb <= 0:
+        raise ValueError("مقدار کاهش باید بزرگ‌تر از صفر باشد.")
+    subtract_bytes = gb_to_bytes(subtract_gb)
+    lifetime = int(row.lifetime_allocated_bytes or 0)
+    new_quota = int(row.quota_bytes or 0) - subtract_bytes
+    if new_quota < lifetime:
+        raise ValueError(
+            f"سقف جدید ({bytes_to_gb(new_quota)} GB) کمتر از مصرف/تخصیص فعلی "
+            f"({bytes_to_gb(lifetime)} GB) است."
+        )
+    row = await repo.subtract_quota_bytes(telegram_id, subtract_bytes)
+    assert row is not None
+    return EditResult(
+        reseller=row,
+        message_text=t.QUOTA_SUBTRACTED.format(
+            label=reseller_label(row),
+            subtract_gb=subtract_gb,
+            quota_gb=bytes_to_gb(row.quota_bytes),
+        ),
+    )
+
+
 async def apply_reset_quota_usage(
     session: AsyncSession, telegram_id: int
 ) -> EditResult:
@@ -70,7 +106,7 @@ async def apply_reset_quota_usage(
         raise ResellerNotFoundError()
     row = await repo.reset_lifetime_to_active(telegram_id)
     assert row is not None
-    st = await QuotaService(repo, ResellerPanelRepository(session)).status(row)
+    st = await QuotaService(repo, ResellerPanelRepository(session)).global_status(row)
     return EditResult(
         reseller=row,
         message_text=t.QUOTA_USAGE_RESET.format(
@@ -102,7 +138,7 @@ async def apply_max_clients(
     if not row:
         raise ResellerNotFoundError()
     quota_svc = QuotaService(repo, ResellerPanelRepository(session))
-    st = await quota_svc.status(row)
+    st = await quota_svc.global_status(row)
     row = await repo.set_max_clients(telegram_id, max_clients)
     assert row is not None
     warning = ""

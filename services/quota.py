@@ -78,27 +78,45 @@ class QuotaService:
             raise QuotaExceeded("این پنل به حساب شما اختصاص داده نشده.")
         return row
 
-    async def status(
-        self, reseller: Reseller, panel_id: int | None = None
-    ) -> QuotaStatus:
-        pid = panel_id if panel_id is not None else reseller.panel_id
-        assignment = await self._get_assignment(reseller, pid)
-        active = await self.repo.active_bytes_on_panel(
-            reseller.telegram_id, pid
-        )
-        lifetime = int(assignment.lifetime_allocated_bytes or 0)
-        count = await self.repo.client_count_on_panel(
-            reseller.telegram_id, pid
-        )
-        remaining = max(0, assignment.quota_bytes - lifetime)
+    async def global_status(self, reseller: Reseller) -> QuotaStatus:
+        """Unified quota pool across all panels (source: resellers row)."""
+        lifetime = int(reseller.lifetime_allocated_bytes or 0)
+        quota = int(reseller.quota_bytes or 0)
+        active = await self.repo.active_bytes(reseller.telegram_id)
+        count = await self.repo.client_count(reseller.telegram_id)
+        remaining = max(0, quota - lifetime)
         return QuotaStatus(
-            quota_bytes=assignment.quota_bytes,
+            quota_bytes=quota,
             active_bytes=active,
             lifetime_bytes=lifetime,
             remaining_bytes=remaining,
             client_count=count,
+            max_clients=reseller.max_clients,
+            panel_id=None,
+        )
+
+    async def status(
+        self, reseller: Reseller, panel_id: int | None = None
+    ) -> QuotaStatus:
+        """Global quota with optional per-panel client_count and max_clients."""
+        global_st = await self.global_status(reseller)
+        if panel_id is None:
+            return global_st
+        assignment = await self._get_assignment(reseller, panel_id)
+        active = await self.repo.active_bytes_on_panel(
+            reseller.telegram_id, panel_id
+        )
+        count = await self.repo.client_count_on_panel(
+            reseller.telegram_id, panel_id
+        )
+        return QuotaStatus(
+            quota_bytes=global_st.quota_bytes,
+            active_bytes=active,
+            lifetime_bytes=global_st.lifetime_bytes,
+            remaining_bytes=global_st.remaining_bytes,
+            client_count=count,
             max_clients=assignment.max_clients,
-            panel_id=pid,
+            panel_id=panel_id,
         )
 
     async def validate_create(
@@ -150,7 +168,7 @@ class QuotaService:
         if allocated <= 0:
             raise QuotaExceeded("حجم باید بزرگ‌تر از صفر باشد.")
 
-        st = await self.status(reseller, panel_id)
+        st = await self.global_status(reseller)
         if allocated > st.remaining_bytes:
             raise QuotaExceeded(
                 f"حجم درخواستی ({bytes_to_gb(allocated)} GB) بیشتر از باقی‌مانده "

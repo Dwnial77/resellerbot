@@ -237,7 +237,6 @@ async def apply_add_panel_assignment(
     session: AsyncSession,
     telegram_id: int,
     panel_id: int,
-    quota_gb: float,
     allowed_inbound_ids: list[int],
     *,
     attach_inbound_ids: list[int] | None = None,
@@ -252,7 +251,7 @@ async def apply_add_panel_assignment(
     row = await ResellerPanelRepository(session).add(
         telegram_id,
         panel_id,
-        gb_to_bytes(quota_gb),
+        0,
         allowed_inbound_ids,
         attach_inbound_ids=attach_inbound_ids,
         max_clients=max_clients,
@@ -263,7 +262,6 @@ async def apply_add_panel_assignment(
         message_text=t.PANEL_ASSIGNMENT_ADDED.format(
             label=reseller_label(reseller),
             panel_name=panel.name,
-            quota_gb=quota_gb,
         ),
     )
 
@@ -321,8 +319,6 @@ async def apply_set_default_panel(
     if not panel:
         raise PanelNotFoundError()
     reseller.panel_id = panel_id
-    reseller.quota_bytes = assignment.quota_bytes
-    reseller.lifetime_allocated_bytes = assignment.lifetime_allocated_bytes
     reseller.allowed_inbound_ids = assignment.allowed_inbound_ids
     reseller.attach_inbound_ids = assignment.attach_inbound_ids
     reseller.max_clients = assignment.max_clients

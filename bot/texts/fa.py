@@ -24,6 +24,7 @@ ADMIN_MENU = (
     "`/list_inbounds 1` — اینباند پنل شماره 1\n"
     "`/set_panel 123456789 2` — تغییر پنل ریسلر (بدون سرویس)\n"
     "`/set_quota 123456789 200`\n"
+    "`/subtract_quota 123456789 50` — کاهش سقف\n"
     "`/templates` — قالب‌های ساخت سرویس"
 )
 
@@ -170,6 +171,10 @@ QUOTA_ADDED = (
     "به سقف ریسلر {label}، {add_gb} GB افزوده شد.\n"
     "سقف جدید: {quota_gb} GB"
 )
+QUOTA_SUBTRACTED = (
+    "از سقف ریسلر {label}، {subtract_gb} GB کم شد.\n"
+    "سقف جدید: {quota_gb} GB"
+)
 QUOTA_USAGE_RESET = (
     "مصرف سهمیه ریسلر {label} ریست شد.\n"
     "مصرف فعلی: {lifetime_gb} GB (برابر تخصیص فعال)\n"
@@ -192,13 +197,13 @@ RESELLER_REPORT = (
     "📈 گزارش ریسلر: {label}\n"
     "وضعیت: {status}\n"
     "پنل پیش‌فرض: {panel_name} (#{panel_id})\n"
+    "سهمیه کل: {quota_gb} GB | مصرف: {lifetime_gb} GB | باقی: {remaining_gb} GB\n"
     "{panels_detail}\n"
     "سرویس کل: {client_count}"
 )
 RESELLER_REPORT_PANEL_LINE = (
     "• {panel_name}: {client_count} سرویس | "
-    "{lifetime_gb}/{quota_gb} GB ({used_percent})\n"
-    "{progress_bar}"
+    "تخصیص فعال: {active_gb} GB"
 )
 REPORT_UPDATED = "گزارش بروزرسانی شد."
 RESELLER_HUB_HINT = (
@@ -216,9 +221,9 @@ RESELLER_PANEL_VIEW = (
     "ریسلر: {label}\n"
     "پنل: {panel_name} (#{panel_id})\n"
     "وضعیت تخصیص: {status}\n"
-    "سقف: {quota_gb} GB | باقی: {remaining_gb} GB\n"
-    "تخصیص فعال: {active_gb} GB | مصرف: {lifetime_gb} GB\n"
-    "سرویس: {client_count} | حداکثر: {max_clients}\n"
+    "سرویس روی این پنل: {client_count} | حداکثر: {max_clients}\n"
+    "تخصیص فعال روی پنل: {active_gb} GB\n"
+    "سهمیه کل ریسلر: {quota_gb} GB | باقی: {remaining_gb} GB\n"
     "مجاز: {allowed_inbounds}\n"
     "متصل: {attach_inbounds}"
 )
@@ -226,7 +231,8 @@ RESELLER_PANEL_EDIT_MENU = "ویرایش {panel_name} — {label}:"
 RESELLER_PANEL_ADD_PICK = "پنل جدید برای این ریسلر انتخاب کنید:"
 RESELLER_PANEL_ADD_QUOTA = "سقف حجم (GB) برای این پنل:"
 PANEL_ASSIGNMENT_ADDED = (
-    "پنل {panel_name} به {label} اضافه شد.\nسقف: {quota_gb} GB"
+    "پنل {panel_name} به {label} اضافه شد.\n"
+    "سهمیه حجم از سقف کل ریسلر استفاده می‌شود."
 )
 PANEL_ASSIGNMENT_REMOVED = "تخصیص پنل {panel_name} از {label} حذف شد."
 PANEL_CREATE_ALLOWED = "ساخت کلاینت روی {panel_name} — {label} مجاز شد."
@@ -258,6 +264,8 @@ PANEL_NOT_LOADED = "اتصال به پنل برقرار نیست."
 CREATE_PICK_PANEL = "پنل را برای ساخت سرویس انتخاب کنید:"
 WELCOME_RESELLER_MULTI = (
     "سلام{display_name}!\n\n"
+    "{quota_block}\n\n"
+    "پنل‌ها:\n"
     "{panels_lines}\n"
     "سرویس کل: {client_count}"
 )
@@ -268,6 +276,10 @@ RESELLER_EDIT_QUOTA_PROMPT = (
 RESELLER_EDIT_ADD_QUOTA_PROMPT = (
     "افزودن به سقف (GB) برای {label}:\n"
     "یکی از دکمه‌ها را بزنید یا مقدار افزایش را بنویسید:"
+)
+RESELLER_EDIT_SUBTRACT_QUOTA_PROMPT = (
+    "کاهش از سقف (GB) برای {label}:\n"
+    "یکی از دکمه‌ها را بزنید یا مقدار کاهش را بنویسید:"
 )
 RESELLER_RESET_QUOTA_CONFIRM = (
     "ریست مصرف سهمیه برای {label}؟\n\n"

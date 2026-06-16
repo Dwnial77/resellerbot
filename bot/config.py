@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     create_rate_limit: int = 5
     quota_refund_max_traffic_gb: float = 1.0
 
-    usage_alert_enabled: bool = True
+    usage_alert_enabled: bool = False
     usage_alert_interval_seconds: int = 300
 
     update_zip_max_bytes: int = 52_428_800

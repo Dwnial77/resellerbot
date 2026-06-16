@@ -12,8 +12,6 @@ from bot.keyboards.common import reseller_report_hub_kb, reseller_report_view_kb
 from bot.texts import fa as t
 from bot.utils.report_format import (
     format_hub_summary_line,
-    format_progress_bar_line,
-    format_used_percent,
     usage_percent_int,
 )
 from db.models import Reseller
@@ -47,7 +45,7 @@ async def _load_reseller_stats(
     quota = QuotaService(repo, panel_repo)
     stats: dict[int, QuotaStatus] = {}
     for r in resellers[:20]:
-        stats[r.telegram_id] = await quota.status(r, r.panel_id)
+        stats[r.telegram_id] = await quota.global_status(r)
     return stats
 
 
@@ -98,6 +96,7 @@ async def _reseller_report_content(telegram_id: int) -> str | None:
         panel = await panels_db.get(reseller.panel_id)
         panel_name = panel.name if panel else f"#{reseller.panel_id}"
         quota = QuotaService(repo, assign_repo)
+        global_st = await quota.global_status(reseller)
         assignments = await assign_repo.list_for_reseller(telegram_id)
         panel_lines: list[str] = []
         client_count = 0
@@ -106,17 +105,11 @@ async def _reseller_report_content(telegram_id: int) -> str | None:
             pname = p.name if p else f"#{a.panel_id}"
             st = await quota.status(reseller, a.panel_id)
             client_count += st.client_count
-            percent = usage_percent_int(st.used_bytes, st.quota_bytes)
             panel_lines.append(
                 t.RESELLER_REPORT_PANEL_LINE.format(
                     panel_name=pname,
                     client_count=st.client_count,
-                    quota_gb=st.quota_gb,
-                    lifetime_gb=st.lifetime_gb,
-                    used_percent=format_used_percent(
-                        st.lifetime_bytes, st.quota_bytes
-                    ),
-                    progress_bar=format_progress_bar_line(percent),
+                    active_gb=st.active_gb,
                 )
             )
 
@@ -125,6 +118,9 @@ async def _reseller_report_content(telegram_id: int) -> str | None:
         status="فعال" if reseller.is_active else "غیرفعال",
         panel_name=panel_name,
         panel_id=reseller.panel_id,
+        quota_gb=global_st.quota_gb,
+        lifetime_gb=global_st.lifetime_gb,
+        remaining_gb=global_st.remaining_gb,
         panels_detail="\n".join(panel_lines) if panel_lines else "—",
         client_count=client_count,
     )

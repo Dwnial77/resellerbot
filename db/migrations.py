@@ -254,6 +254,36 @@ def migrate_007_reseller_panels(sync_conn: Any) -> None:
     )
 
 
+def migrate_008_unified_reseller_quota(sync_conn: Any) -> None:
+    """Pool reseller quota across all panel assignments (v1.2.6)."""
+    sync_conn.execute(
+        text(
+            """
+            UPDATE resellers SET quota_bytes = (
+                SELECT COALESCE(SUM(rp.quota_bytes), resellers.quota_bytes)
+                FROM reseller_panels rp
+                WHERE rp.reseller_tg_id = resellers.telegram_id
+            )
+            WHERE EXISTS (
+                SELECT 1 FROM reseller_panels rp
+                WHERE rp.reseller_tg_id = resellers.telegram_id
+            )
+            """
+        )
+    )
+    sync_conn.execute(
+        text(
+            """
+            UPDATE resellers SET lifetime_allocated_bytes = (
+                SELECT COALESCE(SUM(cr.allocated_bytes), 0)
+                FROM client_records cr
+                WHERE cr.reseller_tg_id = resellers.telegram_id
+            )
+            """
+        )
+    )
+
+
 MIGRATIONS.extend(
     [
         (1, migrate_001_client_records_sub_id),
@@ -263,6 +293,7 @@ MIGRATIONS.extend(
         (5, migrate_005_client_records_panel_unique),
         (6, migrate_006_resellers_lifetime_allocated),
         (7, migrate_007_reseller_panels),
+        (8, migrate_008_unified_reseller_quota),
     ]
 )
 

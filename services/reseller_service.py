@@ -140,13 +140,9 @@ class ResellerService:
             await self.client_repo.delete(record)
             raise XuiError(str(e) or "خطای ناشناخته پنل") from e
 
-        await self.panel_repo.add_lifetime_allocated(
-            reseller.telegram_id, panel_id, allocated
+        await self.reseller_repo.add_lifetime_allocated(
+            reseller.telegram_id, allocated
         )
-        if panel_id == reseller.panel_id:
-            await self.reseller_repo.add_lifetime_allocated(
-                reseller.telegram_id, allocated
-            )
         return record, delivery
 
     async def delete_service(
@@ -169,13 +165,9 @@ class ResellerService:
         )
         await self.client_repo.delete(record)
         if refund > 0:
-            await self.panel_repo.subtract_lifetime_allocated(
-                reseller.telegram_id, record.panel_id, refund
+            await self.reseller_repo.subtract_lifetime_allocated(
+                reseller.telegram_id, refund
             )
-            if record.panel_id == reseller.panel_id:
-                await self.reseller_repo.subtract_lifetime_allocated(
-                    reseller.telegram_id, refund
-                )
         return DeleteServiceResult(refunded_bytes=refund)
 
     async def get_traffic(self, reseller: Reseller, email: str) -> dict:
@@ -255,14 +247,10 @@ class ResellerService:
             raise XuiError(str(e)) from e
         await self.xui.add_client_traffic_bytes(email, allocated)
         record = await self.client_repo.add_allocated_bytes(record, allocated)
-        await self.panel_repo.add_lifetime_allocated(
-            reseller.telegram_id, panel_id, allocated
+        await self.reseller_repo.add_lifetime_allocated(
+            reseller.telegram_id, allocated
         )
-        if panel_id == reseller.panel_id:
-            await self.reseller_repo.add_lifetime_allocated(
-                reseller.telegram_id, allocated
-            )
-        st = await self.quota.status(reseller, panel_id)
+        st = await self.quota.global_status(reseller)
         return AddTrafficResult(
             added_bytes=allocated,
             new_total_bytes=record.allocated_bytes,
@@ -287,14 +275,10 @@ class ResellerService:
             raise XuiError(str(e)) from e
         await self.xui.subtract_client_traffic_bytes(email, removed)
         record = await self.client_repo.subtract_allocated_bytes(record, removed)
-        await self.panel_repo.subtract_lifetime_allocated(
-            reseller.telegram_id, panel_id, removed
+        await self.reseller_repo.subtract_lifetime_allocated(
+            reseller.telegram_id, removed
         )
-        if panel_id == reseller.panel_id:
-            await self.reseller_repo.subtract_lifetime_allocated(
-                reseller.telegram_id, removed
-            )
-        st = await self.quota.status(reseller, panel_id)
+        st = await self.quota.global_status(reseller)
         return RemoveTrafficResult(
             removed_bytes=removed,
             new_total_bytes=record.allocated_bytes,

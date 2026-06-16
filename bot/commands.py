@@ -23,6 +23,7 @@ ADMIN_COMMANDS = [
     BotCommand(command="reports", description="گزارش ریسلرها"),
     BotCommand(command="broadcast", description="پیام همگانی به ریسلرها"),
     BotCommand(command="set_quota", description="تغییر سقف حجم (آیدی و GB)"),
+    BotCommand(command="subtract_quota", description="کاهش سقف حجم (آیدی و GB)"),
     BotCommand(command="set_max_clients", description="سقف تعداد سرویس"),
     BotCommand(command="clear_max_clients", description="حذف محدودیت تعداد سرویس"),
     BotCommand(command="set_name", description="نام نمایشی ریسلر"),

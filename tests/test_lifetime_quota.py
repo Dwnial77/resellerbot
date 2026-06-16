@@ -7,7 +7,7 @@ import pytest
 
 from db.models import ClientRecord, Reseller, ResellerPanel
 from services.quota import QuotaExceeded, QuotaService
-from services.reseller_edit import apply_add_quota, apply_reset_quota_usage
+from services.reseller_edit import apply_add_quota, apply_reset_quota_usage, apply_subtract_quota
 from services.reseller_service import (
     DeleteServiceResult,
     ResellerService,
@@ -48,6 +48,8 @@ def _assignment(reseller: Reseller, *, quota_gb: float, lifetime_gb: float) -> R
 def _quota_service(reseller: Reseller, *, quota_gb: float, lifetime_gb: float, active_gb: float = 0, client_count: int = 0) -> QuotaService:
     assignment = _assignment(reseller, quota_gb=quota_gb, lifetime_gb=lifetime_gb)
     repo = AsyncMock()
+    repo.active_bytes = AsyncMock(return_value=gb_to_bytes(active_gb))
+    repo.client_count = AsyncMock(return_value=client_count)
     repo.active_bytes_on_panel = AsyncMock(return_value=gb_to_bytes(active_gb))
     repo.client_count_on_panel = AsyncMock(return_value=client_count)
     panel_repo = AsyncMock()
@@ -114,6 +116,49 @@ def test_apply_add_quota_increases_ceiling() -> None:
     asyncio.run(_run())
 
 
+def test_apply_subtract_quota_decreases_ceiling() -> None:
+    async def _run() -> None:
+        session = AsyncMock()
+        row = _reseller(quota_gb=500, lifetime_gb=400)
+        repo = MagicMock()
+        repo.get = AsyncMock(return_value=row)
+        repo.subtract_quota_bytes = AsyncMock(
+            return_value=Reseller(
+                telegram_id=100,
+                panel_id=1,
+                quota_bytes=gb_to_bytes(450),
+                lifetime_allocated_bytes=gb_to_bytes(400),
+                allowed_inbound_ids="[1]",
+                attach_inbound_ids="[1]",
+            )
+        )
+
+        with patch("services.reseller_edit.ResellerRepository", return_value=repo):
+            result = await apply_subtract_quota(session, 100, 50)
+
+        repo.subtract_quota_bytes.assert_awaited_once()
+        assert "50" in result.message_text
+        assert "450" in result.message_text
+
+    asyncio.run(_run())
+
+
+def test_apply_subtract_quota_rejects_below_lifetime() -> None:
+    async def _run() -> None:
+        session = AsyncMock()
+        row = _reseller(quota_gb=500, lifetime_gb=400)
+        repo = MagicMock()
+        repo.get = AsyncMock(return_value=row)
+
+        with patch("services.reseller_edit.ResellerRepository", return_value=repo):
+            with pytest.raises(ValueError, match="مصرف"):
+                await apply_subtract_quota(session, 100, 200)
+
+        repo.subtract_quota_bytes.assert_not_called()
+
+    asyncio.run(_run())
+
+
 def test_apply_reset_quota_usage_syncs_lifetime_to_active() -> None:
     async def _run() -> None:
         session = AsyncMock()
@@ -125,8 +170,9 @@ def test_apply_reset_quota_usage_syncs_lifetime_to_active() -> None:
         repo = MagicMock()
         repo.get = AsyncMock(return_value=row)
         repo.reset_lifetime_to_active = AsyncMock(return_value=reset_row)
+        repo.active_bytes = AsyncMock(return_value=active)
+        repo.client_count = AsyncMock(return_value=2)
         repo.active_bytes_on_panel = AsyncMock(return_value=active)
-        repo.client_count_on_panel = AsyncMock(return_value=2)
         panel_repo = AsyncMock()
         panel_repo.get = AsyncMock(
             return_value=_assignment(row, quota_gb=500, lifetime_gb=80)
@@ -218,9 +264,7 @@ def test_delete_service_refunds_when_used_under_1gb() -> None:
         result = await _delete_service(svc, _reseller())
         assert isinstance(result, DeleteServiceResult)
         assert result.refunded_bytes == gb_to_bytes(50)
-        panel_repo.subtract_lifetime_allocated.assert_awaited_once_with(
-            100, 1, gb_to_bytes(50)
-        )
+        panel_repo.subtract_lifetime_allocated.assert_not_called()
         reseller_repo.subtract_lifetime_allocated.assert_awaited_once_with(
             100, gb_to_bytes(50)
         )

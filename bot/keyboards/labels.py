@@ -62,6 +62,7 @@ UNLIMITED_MAX_CLIENTS = "♾ نامحدود (حذف محدودیت)"
 # Reseller edit menu
 EDIT_QUOTA = "📊 سقف حجم (GB)"
 EDIT_ADD_QUOTA = "➕ افزودن سقف"
+EDIT_SUBTRACT_QUOTA = "➖ کاهش سقف"
 RESET_QUOTA_USAGE = "🔄 ریست مصرف (پکیج جدید)"
 EDIT_MAX_CLIENTS = "🔢 سقف تعداد سرویس"
 EDIT_DISPLAY_NAME = "🏷 نام نمایشی"

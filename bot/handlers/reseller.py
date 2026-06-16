@@ -128,12 +128,13 @@ async def _create_panel_options(
     quota_svc = QuotaService(
         ResellerRepository(session), ResellerPanelRepository(session)
     )
+    global_st = await quota_svc.global_status(reseller)
+    remaining = global_st.remaining_gb
     out: list[tuple[int, str, float]] = []
     for panel_id in await accessible_panel_ids(panel_registry, session, reseller):
         panel = await panel_repo.get(panel_id)
         name = panel.name if panel else f"#{panel_id}"
-        st = await quota_svc.status(reseller, panel_id)
-        out.append((panel_id, name, st.remaining_gb))
+        out.append((panel_id, name, remaining))
     return out
 
 

@@ -729,6 +729,12 @@ def reseller_edit_menu_kb(telegram_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text=L.EDIT_SUBTRACT_QUOTA,
+                    callback_data=f"rsl:ev:subq:{tid}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
                     text=L.RESET_QUOTA_USAGE,
                     callback_data=f"rsl:ev:resetu:{tid}",
                 ),
@@ -795,6 +801,32 @@ def reseller_edit_add_quota_kb(telegram_id: int) -> InlineKeyboardMarkup:
         row.append(
             InlineKeyboardButton(
                 text=f"+{v} GB", callback_data=f"rsl:eaq:{v}:{telegram_id}"
+            )
+        )
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=L.CANCEL,
+                callback_data=f"rsl:edit_cancel:{telegram_id}",
+            ),
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def reseller_edit_subtract_quota_kb(telegram_id: int) -> InlineKeyboardMarkup:
+    volumes = (5, 10, 20, 50, 100, 500)
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for v in volumes:
+        row.append(
+            InlineKeyboardButton(
+                text=f"-{v} GB", callback_data=f"rsl:esq:{v}:{telegram_id}"
             )
         )
         if len(row) == 3:

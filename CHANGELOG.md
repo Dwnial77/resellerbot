@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.7] - 2026-06-01
+
+### Added
+
+- **کاهش سقف سهمیه ریسلر (ادمین):** دکمه «کاهش سقف»، `/subtract_quota` و اعتبارسنجی که سقف جدید از مصرف/تخصیص فعلی کمتر نشود
+- تست‌های `apply_subtract_quota` (موفق و رد زیر lifetime)
+
+### Changed
+
+- `set_quota` / `apply_quota`: همان قانون floor روی `lifetime_allocated_bytes`
+
+## [1.2.6] - 2026-06-01
+
+### Added
+
+- **سهمیه یکپارچه ریسلر:** یک سقف حجم مشترک برای همه پنل‌ها (pool روی `resellers`)؛ migration 008 جمع quota و مصرف فعلی را بدون از دست رفتن باقی‌مانده اعمال می‌کند
+- تست migration 008 و ساخت روی پنلی که قبلاً per-panel «پر» بود ولی pool کل باقی داشت
+
+### Changed
+
+- `QuotaService`: `global_status()` منبع حقیقت سهمیه؛ `max_clients` همچنان per پنل
+- افزودن پنل به ریسلر بدون مرحله سقف جدا؛ ویرایش quota فقط در سطح ریسلر
+- پیام خوش‌آمد، گزارش ادمین و picker ساخت سرویس: نمایش سهمیه کل
+- `USAGE_ALERT` سهمیه ریسلر: یک alert برای کل حساب (نه per پنل)
+- پیش‌فرض `USAGE_ALERT_ENABLED=false` (کاهش فشار API پنل)
+
+### Removed
+
+- دکمه‌های ویرایش سقف/افزودن/ریست مصرف per پنل در منوی ادمین
+
 ## [1.2.5] - 2026-06-01
 
 ### Added
