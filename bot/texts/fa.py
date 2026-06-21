@@ -594,3 +594,46 @@ BOT_UPDATE_RESULT_OK = (
     "ربات به‌روز شد: {previous} → {new_version}\n{message}"
 )
 BOT_UPDATE_RESULT_FAIL = "آپدیت ناموفق بود ({previous}): {message}"
+
+BACKUP_MENU = (
+    "پشتیبان دیتابیس\n\n"
+    "دیتابیس شامل ریسلرها، پنل‌ها، سرویس‌ها و قالب‌هاست.\n"
+    "حداکثر حجم فایل برای بازیابی: {max_mb} مگابایت"
+)
+BACKUP_CREATING = "در حال ساخت بک‌آپ…"
+BACKUP_CREATED_CAPTION = (
+    "بک‌آپ دیتابیس\n"
+    "فایل: {filename}\n"
+    "حجم: {size_mb:.2f} MB"
+)
+BACKUP_LIST_HEADER = "بک‌آپ‌های محلی (جدیدترین اول):"
+BACKUP_LIST_EMPTY = "بک‌آپ محلی یافت نشد. از «ساخت بک‌آپ» استفاده کنید."
+BACKUP_LIST_ITEM = "{name} — {size_mb:.1f} MB — {date}"
+BACKUP_RESTORE_PROMPT = (
+    "بازیابی دیتابیس\n\n"
+    "فایل .db یا ZIP حاوی bot.db را بفرستید (حداکثر {max_mb} مگابایت).\n"
+    "پس از تأیید، سرویس ری‌استارت می‌شود و بازیابی هنگام بالا آمدن اعمال می‌شود."
+)
+BACKUP_RESTORE_READY = (
+    "فایل بازیابی آماده است.\n"
+    "فایل: {filename}\n"
+    "حجم: {size_mb:.2f} MB\n\n"
+    "⚠️ داده فعلی جایگزین می‌شود. قبل از اعمال، بک‌آپ خودکار از DB فعلی گرفته می‌شود.\n\n"
+    "با «اعمال و ری‌استارت» ادامه دهید."
+)
+BACKUP_NOT_DB = "فرمت مجاز: فایل .db یا ZIP حاوی bot.db"
+BACKUP_TOO_LARGE = "حجم فایل بیش از حد مجاز است."
+BACKUP_CANCELLED = "عملیات پشتیبان لغو شد."
+BACKUP_NO_PENDING = "فایل بازیابی در صف نیست."
+BACKUP_NO_DATABASE = "دیتابیس یافت نشد."
+BACKUP_RESTARTING = (
+    "در حال ری‌استارت سرویس `{service}`…\n"
+    "پس از بالا آمدن، بازیابی اعمال می‌شود."
+)
+BACKUP_RESTART_MANUAL = (
+    "ری‌استارت خودکار انجام نشد.\n"
+    "جزئیات: {detail}\n\n"
+    "دستی: sudo systemctl restart {service}"
+)
+BACKUP_RESULT_OK = "بازیابی دیتابیس موفق بود.\nفایل: {filename}\n{message}"
+BACKUP_RESULT_FAIL = "بازیابی ناموفق بود: {message}"

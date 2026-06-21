@@ -9,6 +9,7 @@ PANELS = "🖥 پنل‌ها"
 ADMIN_HELP = "❓ راهنمای ادمین"
 BROADCAST = "📢 پیام همگانی"
 BOT_UPDATE = "⬆️ آپدیت ربات"
+BACKUP = "💾 پشتیبان"
 
 # Reply keyboard — reseller
 CREATE_SERVICE = "✨ ساخت سرویس"

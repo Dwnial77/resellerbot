@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     usage_alert_interval_seconds: int = 300
 
     update_zip_max_bytes: int = 52_428_800
+    backup_max_bytes: int = 52_428_800
     systemd_service_name: str = "resellerbot"
     allow_update_downgrade: bool = False
 

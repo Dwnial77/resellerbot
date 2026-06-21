@@ -78,6 +78,10 @@ class BotUpdateStates(StatesGroup):
     waiting_zip = State()
 
 
+class BackupRestoreStates(StatesGroup):
+    waiting_file = State()
+
+
 class BroadcastStates(StatesGroup):
     message = State()
     confirm = State()

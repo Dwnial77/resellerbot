@@ -19,6 +19,7 @@ from bot.texts import fa as t
 from bot.version import __version__
 from db.session import get_session_factory, init_db
 from services.panel_registry import PanelRegistry
+from services.backup import apply_pending_restore, load_restore_result
 from services.updater import apply_pending_update, load_update_result, project_root
 
 logging.basicConfig(
@@ -50,6 +51,24 @@ async def _notify_update_result(bot: Bot, admin_ids: list[int]) -> None:
             logger.warning("Could not notify admin %s of update: %s", admin_id, e)
 
 
+async def _notify_restore_result(bot: Bot, admin_ids: list[int]) -> None:
+    result = load_restore_result(project_root())
+    if result is None:
+        return
+    if result.success:
+        text = t.BACKUP_RESULT_OK.format(
+            filename=result.filename,
+            message=result.message,
+        )
+    else:
+        text = t.BACKUP_RESULT_FAIL.format(message=result.message)
+    for admin_id in admin_ids:
+        try:
+            await bot.send_message(admin_id, text)
+        except Exception as e:
+            logger.warning("Could not notify admin %s of restore: %s", admin_id, e)
+
+
 async def main() -> None:
     root = project_root()
     settings = get_settings()
@@ -63,6 +82,13 @@ async def main() -> None:
             logger.info("Update applied: %s", applied.message)
         else:
             logger.error("Update failed: %s", applied.message)
+
+    restored = apply_pending_restore(root)
+    if restored is not None:
+        if restored.success:
+            logger.info("Restore applied: %s", restored.message)
+        else:
+            logger.error("Restore failed: %s", restored.message)
 
     await init_db()
 
@@ -84,6 +110,7 @@ async def main() -> None:
 
     bot = Bot(token=settings.bot_token)
     await _notify_update_result(bot, settings.admin_telegram_ids)
+    await _notify_restore_result(bot, settings.admin_telegram_ids)
     await setup_bot_commands(bot, settings.admin_telegram_ids)
 
     dp = Dispatcher(storage=MemoryStorage())

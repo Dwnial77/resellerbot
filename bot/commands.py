@@ -19,6 +19,7 @@ ADMIN_COMMANDS = [
     BotCommand(command="admin", description="راهنمای کوتاه ادمین"),
     BotCommand(command="version", description="نسخه ربات"),
     BotCommand(command="bot_update", description="آپدیت ربات (GitHub یا ZIP)"),
+    BotCommand(command="backup", description="پشتیبان و بازیابی دیتابیس"),
     BotCommand(command="list_resellers", description="هاب مدیریت ریسلرها"),
     BotCommand(command="reports", description="گزارش ریسلرها"),
     BotCommand(command="broadcast", description="پیام همگانی به ریسلرها"),

@@ -40,7 +40,10 @@ def admin_main_kb() -> ReplyKeyboardMarkup:
                 KeyboardButton(text=L.BOT_UPDATE),
             ],
             [
+                KeyboardButton(text=L.BACKUP),
                 KeyboardButton(text=L.BROADCAST),
+            ],
+            [
                 KeyboardButton(text=L.ADMIN_HELP),
             ],
         ],
@@ -93,6 +96,68 @@ def bot_update_confirm_kb() -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+def backup_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💾 ساخت بک‌آپ الان",
+                    callback_data="bkp:create",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📂 لیست بک‌آپ‌های محلی",
+                    callback_data="bkp:list",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="♻️ بازیابی از فایل",
+                    callback_data="bkp:restore",
+                ),
+            ],
+            [
+                InlineKeyboardButton(text=L.CANCEL, callback_data="bkp:cancel_menu"),
+            ],
+        ]
+    )
+
+
+def backup_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ اعمال و ری‌استارت",
+                    callback_data="bkp:apply",
+                ),
+                InlineKeyboardButton(
+                    text=L.CANCEL,
+                    callback_data="bkp:cancel",
+                ),
+            ],
+        ]
+    )
+
+
+def backup_list_kb(entries: list[tuple[int, str]]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for index, label in entries:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=f"bkp:dl:{index}",
+                ),
+            ]
+        )
+    rows.append(
+        [InlineKeyboardButton(text=L.BACK, callback_data="bkp:menu")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def broadcast_confirm_kb() -> InlineKeyboardMarkup:

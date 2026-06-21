@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from bot.version import __version__ as RUNNING_VERSION
+from services.backup import create_backup
 
 logger = logging.getLogger(__name__)
 
@@ -326,18 +327,6 @@ def clear_pending(root: Path | None = None) -> None:
             p.unlink(missing_ok=True)
 
 
-def _backup_database(root: Path) -> None:
-    db_file = root / "data" / "bot.db"
-    if not db_file.is_file():
-        return
-    backups = root / "data" / "backups"
-    backups.mkdir(parents=True, exist_ok=True)
-    from datetime import datetime, timezone
-
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    shutil.copy2(db_file, backups / f"bot.db.{stamp}")
-
-
 def _copy_release_into_install(tree: Path, install: Path) -> None:
     for name in _RELEASE_ROOT_ENTRIES:
         src = tree / name
@@ -385,7 +374,7 @@ def apply_pending_update(
         if compare_versions(target, previous) < 0 and not allow_downgrade:
             raise UpdateError("downgrade blocked")
         release_root = _extract_release_zip(zip_path, staging)
-        _backup_database(root)
+        create_backup(root)
         _copy_release_into_install(release_root, root)
         _run_pip_install(root)
         clear_pending(root)

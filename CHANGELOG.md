@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.8] - 2026-06-01
+
+### Added
+
+- **پشتیبان و بازیابی دیتابیس (ادمین):** `/backup` یا دکمه «پشتیبان» — ساخت بک‌آپ، لیست/دانلود محلی، بازیابی از `.db` یا ZIP (staged + restart)
+- `services/backup.py` با `sqlite3.backup` برای snapshot یکنواخت
+- قبل از ریستور: بک‌آپ خودکار DB فعلی؛ رد در صورت آپدیت معلق
+
+### Changed
+
+- `_backup_database` در updater به `create_backup` مشترک delegate می‌شود
+
 ## [1.2.7] - 2026-06-01
 
 ### Added

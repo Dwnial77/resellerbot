@@ -2,6 +2,7 @@ from aiogram import Router
 
 from bot.handlers import (
     admin,
+    admin_backup,
     admin_broadcast,
     admin_panels,
     admin_reports,
@@ -27,5 +28,6 @@ def setup_routers() -> Router:
     root.include_router(admin_panels.router)
     root.include_router(admin_templates.router)
     root.include_router(admin_update.router)
+    root.include_router(admin_backup.router)
     root.include_router(reseller.router)
     return root
