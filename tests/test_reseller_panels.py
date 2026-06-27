@@ -9,6 +9,7 @@ from db.models import Panel, Reseller, ResellerPanel
 from db.repository import ResellerPanelRepository, ResellerRepository
 from services.quota import QuotaExceeded, QuotaService
 from services.reseller_panel_edit import (
+    apply_add_panel_assignment,
     apply_panel_toggle_create_allowed,
     apply_set_default_panel,
 )
@@ -110,6 +111,81 @@ def test_validate_create_rejects_unassigned_panel() -> None:
         svc = QuotaService(AsyncMock(), panel_repo)
         with pytest.raises(QuotaExceeded, match="اختصاص"):
             await svc.validate_create(reseller, 9, 20, [1])
+
+    asyncio.run(_run())
+
+
+def test_apply_add_panel_assignment() -> None:
+    async def _run() -> None:
+        session = AsyncMock()
+        reseller = _reseller(panel_id=1)
+        panel = Panel(
+            id=2,
+            name="Panel B",
+            base_url="https://x",
+            api_token="t",
+            verify_ssl=True,
+            auto_vision_flow=True,
+            auto_reseller_group=True,
+            is_active=True,
+        )
+        assignment = _assignment(reseller, 2, quota_gb=0)
+
+        with (
+            patch("services.reseller_panel_edit.ResellerRepository") as ResellerRepo,
+            patch("services.reseller_panel_edit.ResellerPanelRepository") as PanelAssignRepo,
+            patch("services.reseller_panel_edit.PanelRepository") as PanelRepo,
+        ):
+            ResellerRepo.return_value.get = AsyncMock(return_value=reseller)
+            PanelRepo.return_value.get = AsyncMock(return_value=panel)
+            PanelAssignRepo.return_value.add = AsyncMock(return_value=assignment)
+
+            result = await apply_add_panel_assignment(session, 100, 2, [1, 2])
+
+        PanelAssignRepo.return_value.add.assert_awaited_once_with(
+            100, 2, 0, [1, 2], attach_inbound_ids=None, max_clients=None
+        )
+        assert "Panel B" in result.message_text
+
+    asyncio.run(_run())
+
+
+def test_reseller_panel_add_pick_panel_has_panel_registry_param() -> None:
+    import inspect
+
+    from bot.handlers.admin_reseller_panels import reseller_panel_add_pick_panel
+
+    params = inspect.signature(reseller_panel_add_pick_panel).parameters
+    assert "panel_registry" in params
+
+
+def test_reseller_panel_add_pick_panel_lists_inbounds() -> None:
+    async def _run() -> None:
+        from unittest.mock import MagicMock
+
+        from bot.handlers.admin_reseller_panels import reseller_panel_add_pick_panel
+
+        callback = MagicMock()
+        callback.data = "rsl:padd_pan:2:100"
+        callback.from_user.id = 1
+        callback.message = AsyncMock()
+        callback.answer = AsyncMock()
+
+        state = AsyncMock()
+        state.update_data = AsyncMock()
+        state.set_state = AsyncMock()
+
+        xui = AsyncMock()
+        xui.list_inbounds = AsyncMock(return_value=[{"id": 1, "remark": "main"}])
+        registry = MagicMock()
+        registry.get_client.return_value = xui
+
+        with patch("bot.handlers.admin_reseller_panels._is_admin", return_value=True):
+            await reseller_panel_add_pick_panel(callback, state, registry)
+
+        registry.get_client.assert_called_once_with(2)
+        xui.list_inbounds.assert_awaited_once()
+        state.set_state.assert_awaited_once()
 
     asyncio.run(_run())
 

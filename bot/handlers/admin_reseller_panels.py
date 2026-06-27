@@ -26,7 +26,7 @@ from services.quota import QuotaService
 from services.reseller_labels import reseller_label
 from services.reseller_panel_edit import (
     AssignmentNotFoundError,
-    PanelNotFoundError,
+    PanelNotFoundError as EditPanelNotFoundError,
     ResellerNotFoundError,
     apply_add_panel_assignment,
     apply_panel_allowed_inbounds,
@@ -290,8 +290,12 @@ async def reseller_panel_add_start(
     AddResellerPanelStates.pick_panel, F.data.regexp(r"^rsl:padd_pan:\d+:\d+$")
 )
 async def reseller_panel_add_pick_panel(
-    callback: CallbackQuery, state: FSMContext
+    callback: CallbackQuery,
+    state: FSMContext,
+    panel_registry: PanelRegistry,
 ) -> None:
+    if not _is_admin(callback.from_user.id if callback.from_user else None):
+        return
     if not callback.data or not callback.message:
         await callback.answer()
         return
@@ -370,7 +374,7 @@ async def reseller_panel_add_finish(callback: CallbackQuery, state: FSMContext) 
                 int(panel_id),
                 [int(x) for x in selected],
             )
-        except (ResellerNotFoundError, PanelNotFoundError, ValueError) as e:
+        except (ResellerNotFoundError, EditPanelNotFoundError, ValueError) as e:
             await callback.answer(str(e)[:200], show_alert=True)
             return
     await state.clear()

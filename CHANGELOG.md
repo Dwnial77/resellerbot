@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.9] - 2026-06-01
+
+### Fixed
+
+- افزودن پنل به ریسلر: handler انتخاب پنل `panel_registry` را inject نمی‌گرفت و بعد از کلیک پنل گیر می‌کرد (NameError)
+
 ## [1.2.8] - 2026-06-01
 
 ### Added
