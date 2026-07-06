@@ -17,7 +17,6 @@ from bot.keyboards.common import (
     expiry_mode_kb,
     reduce_traffic_confirm_kb,
     reduce_traffic_volume_kb,
-    reset_traffic_confirm_kb,
     service_detail_kb,
     service_edit_kb,
     SERVICES_PAGE_SIZE,
@@ -1765,60 +1764,6 @@ async def service_edit_back(
         return
     await callback.answer()
 
-
-@router.callback_query(F.data.regexp(r"^edit_reset:[^:]+$"))
-async def service_edit_reset_prompt(callback: CallbackQuery) -> None:
-    email = (callback.data or "").split(":", 1)[1]
-    if not callback.message:
-        await callback.answer()
-        return
-    await callback.message.edit_text(  # type: ignore[union-attr]
-        t.RESET_TRAFFIC_CONFIRM.format(email=email),
-        parse_mode="Markdown",
-        reply_markup=reset_traffic_confirm_kb(email),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("edit_reset_ok:"))
-async def service_edit_reset_confirm(
-    callback: CallbackQuery, panel_registry: PanelRegistry
-) -> None:
-    email = (callback.data or "").split(":", 1)[1]
-    if not callback.from_user or not callback.message:
-        await callback.answer()
-        return
-    try:
-        async with open_service_context(
-            panel_registry, callback.from_user.id, email
-        ) as (ctx, session):
-            svc = ResellerService(session, ctx.xui)
-            try:
-                await svc.reset_service_traffic(ctx.reseller, email)
-            except XuiError as e:
-                await callback.answer(str(e), show_alert=True)
-                return
-    except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
-        await answer_resolve_callback(callback, e)
-        return
-    await callback.answer(t.TRAFFIC_RESET_OK)
-    await _show_service_edit_menu(
-        callback.message, email, callback.from_user.id, panel_registry  # type: ignore[arg-type]
-    )
-
-
-@router.callback_query(F.data.startswith("edit_reset_no:"))
-async def service_edit_reset_cancel(
-    callback: CallbackQuery, panel_registry: PanelRegistry
-) -> None:
-    email = (callback.data or "").split(":", 1)[1]
-    if not callback.from_user or not callback.message:
-        await callback.answer()
-        return
-    await _show_service_edit_menu(
-        callback.message, email, callback.from_user.id, panel_registry  # type: ignore[arg-type]
-    )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("edit_limit:"))

@@ -230,10 +230,6 @@ class ResellerService:
             raise XuiError("کلاینت در پنل یافت نشد.")
         return read_limit_ip(client), read_comment(client)
 
-    async def reset_service_traffic(self, reseller: Reseller, email: str) -> None:
-        await self._get_owned_record(reseller, email)
-        await self.xui.reset_client_traffic(email)
-
     async def add_service_traffic(
         self, reseller: Reseller, email: str, volume_gb: float
     ) -> AddTrafficResult:

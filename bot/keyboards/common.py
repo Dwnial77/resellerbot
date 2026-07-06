@@ -1306,30 +1306,9 @@ def delete_confirm_kb(email: str) -> InlineKeyboardMarkup:
     )
 
 
-def reset_traffic_confirm_kb(email: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=L.YES_RESET,
-                    callback_data=f"edit_reset_ok:{email}",
-                ),
-                InlineKeyboardButton(
-                    text=L.NO, callback_data=f"edit_reset_no:{email}"
-                ),
-            ],
-        ]
-    )
-
-
 def service_edit_kb(email: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=L.RESET_TRAFFIC, callback_data=f"edit_reset:{email}"
-                ),
-            ],
             [
                 InlineKeyboardButton(
                     text=L.EDIT_LIMIT_IP, callback_data=f"edit_limit:{email}"
