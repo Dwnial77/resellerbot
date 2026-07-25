@@ -43,8 +43,8 @@ from bot.utils.edit_service import (
 from bot.utils.expiry import InvalidExpiryInputError, parse_expiry_date
 from bot.utils.format_delivery import (
     DELIVERY_PARSE_MODE,
-    config_display_label,
     format_delivery_message,
+    qr_caption,
 )
 from bot.utils.qr_vless import InvalidVlessQrError, generate_vless_qr_png
 from bot.utils.format_traffic import (
@@ -1598,12 +1598,6 @@ async def service_link(
     await callback.answer()
 
 
-def _qr_caption(email: str, remark: str) -> str:
-    label = config_display_label(email, remark)
-    remark_line = f"{label}\n" if label else ""
-    return t.QR_CAPTION.format(remark_line=remark_line)
-
-
 @router.callback_query(F.data.startswith("qr_menu:"))
 async def show_vless_qr_menu(
     callback: CallbackQuery, panel_registry: PanelRegistry
@@ -1673,7 +1667,7 @@ async def send_vless_qr(
         return
     await callback.message.answer_photo(  # type: ignore[union-attr]
         BufferedInputFile(png, filename="vless-qr.png"),
-        caption=_qr_caption(email, cfg.remark),
+        caption=qr_caption(email, cfg.remark),
     )
     await callback.answer(t.QR_SENT)
 

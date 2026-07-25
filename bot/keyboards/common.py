@@ -1578,6 +1578,26 @@ def vless_qr_kb(email: str, configs: list[VlessConfig]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _guest_qr_callback_data(email: str, index: int) -> str:
+    data = f"gqr:{email}:{index}"
+    if len(data) > _TELEGRAM_CALLBACK_MAX:
+        raise ValueError("callback_data too long for QR button")
+    return data
+
+
+def guest_vless_qr_kb(email: str, configs: list[VlessConfig]) -> InlineKeyboardMarkup:
+    rows = []
+    for i, cfg in enumerate(configs):
+        try:
+            cb = _guest_qr_callback_data(email, i)
+        except ValueError:
+            continue
+        rows.append(
+            [InlineKeyboardButton(text=_qr_button_label(email, cfg, i), callback_data=cb)]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def service_detail_kb(email: str, *, enabled: bool = True) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[

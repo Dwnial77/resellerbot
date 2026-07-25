@@ -1,12 +1,12 @@
 """Admin review (approve/reject) of pending guest purchase orders."""
 
 from aiogram import F, Router
-from aiogram.types import BufferedInputFile, CallbackQuery
+from aiogram.types import CallbackQuery
 
 from bot.handlers.admin import _is_admin
+from bot.keyboards.common import guest_vless_qr_kb
 from bot.texts import fa as t
 from bot.utils.format_delivery import DELIVERY_PARSE_MODE, format_delivery_message
-from bot.utils.qr_vless import InvalidVlessQrError, generate_vless_qr_png
 from db.models import Plan
 from db.repository import GuestOrderRepository, GuestSalesConfigRepository
 from db.session import get_session_factory
@@ -66,19 +66,18 @@ async def guest_order_approve(
         await GuestOrderRepository(session).mark_approved(order.id, record.id)
 
     delivery_text = format_delivery_message(record.email, delivery, created=True)
+    qr_markup = (
+        guest_vless_qr_kb(record.email, delivery.vless_configs)
+        if delivery.vless_configs
+        else None
+    )
     try:
         await callback.bot.send_message(  # type: ignore[union-attr]
-            order.telegram_id, delivery_text, parse_mode=DELIVERY_PARSE_MODE
+            order.telegram_id,
+            delivery_text,
+            parse_mode=DELIVERY_PARSE_MODE,
+            reply_markup=qr_markup,
         )
-        for cfg in delivery.vless_configs:
-            try:
-                png = generate_vless_qr_png(cfg.link)
-            except InvalidVlessQrError:
-                continue
-            await callback.bot.send_photo(  # type: ignore[union-attr]
-                order.telegram_id,
-                BufferedInputFile(png, filename="vless-qr.png"),
-            )
     except Exception as e:
         await callback.answer(f"تحویل داده شد اما ارسال به کاربر ناموفق بود: {e}", show_alert=True)
         return

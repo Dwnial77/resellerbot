@@ -27,6 +27,12 @@ def config_display_label(email: str, remark: str) -> str:
     return f"{email} — {remark}"
 
 
+def qr_caption(email: str, remark: str) -> str:
+    label = config_display_label(email, remark)
+    remark_line = f"{label}\n" if label else ""
+    return t.QR_CAPTION.format(remark_line=remark_line)
+
+
 def _delivery_guide(delivery: ClientDelivery) -> str:
     if delivery.subscription_links:
         return t.DELIVERY_GUIDE_WITH_SUB

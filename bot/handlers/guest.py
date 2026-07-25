@@ -4,18 +4,30 @@ import logging
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from bot.config import get_settings
 from bot.keyboards import labels as btn
 from bot.keyboards.common import guest_order_review_kb, guest_plan_picker_kb
 from bot.states import GuestPurchaseStates, GuestSupportStates
 from bot.texts import fa as t
+from bot.utils.format_delivery import qr_caption
+from bot.utils.qr_vless import InvalidVlessQrError, generate_vless_qr_png
 from bot.utils.template_labels import expiry_label
 from db.models import Plan
-from db.repository import GuestOrderRepository, GuestSalesConfigRepository, PlanRepository
+from db.repository import (
+    GuestOrderRepository,
+    GuestSalesConfigRepository,
+    PlanRepository,
+    ResellerRepository,
+)
 from db.session import get_session_factory
 from services.client_volume import MIN_CLIENT_VOLUME_GB
+from services.guest_sales import SYSTEM_RESELLER_TG_ID
+from services.panel_registry import PanelRegistry
+from services.panel_resolve import ResellerPanelUnavailableError, xui_for_reseller
+from services.reseller_service import ResellerService
+from xui.client import XuiError
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -199,6 +211,54 @@ async def guest_receipt_received(
     await state.clear()
     await message.answer(t.GUEST_ORDER_SUBMITTED)
     await _notify_admins_of_order(message, order.id, plan)
+
+
+@router.callback_query(F.data.regexp(r"^gqr:[^:]+:\d+$"))
+async def guest_send_vless_qr(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
+    data = callback.data or ""
+    try:
+        _, email, idx_s = data.split(":", 2)
+        index = int(idx_s)
+    except (ValueError, IndexError):
+        await callback.answer(t.INVALID_INPUT, show_alert=True)
+        return
+    if not callback.message:
+        await callback.answer()
+        return
+
+    async with get_session_factory()() as session:
+        reseller = await ResellerRepository(session).get(SYSTEM_RESELLER_TG_ID)
+        if reseller is None:
+            await callback.answer(t.SERVICE_NOT_FOUND, show_alert=True)
+            return
+        try:
+            xui = await xui_for_reseller(panel_registry, session, reseller)
+        except ResellerPanelUnavailableError:
+            await callback.answer(t.SERVICE_NOT_FOUND, show_alert=True)
+            return
+        svc = ResellerService(session, xui)
+        try:
+            delivery = await svc.get_delivery(reseller, email)
+        except XuiError as e:
+            await callback.answer(str(e), show_alert=True)
+            return
+
+    if index < 0 or index >= len(delivery.vless_configs):
+        await callback.answer(t.INVALID_INPUT, show_alert=True)
+        return
+    cfg = delivery.vless_configs[index]
+    try:
+        png = generate_vless_qr_png(cfg.link)
+    except InvalidVlessQrError as e:
+        await callback.answer(str(e), show_alert=True)
+        return
+    await callback.message.answer_photo(  # type: ignore[union-attr]
+        BufferedInputFile(png, filename="vless-qr.png"),
+        caption=qr_caption(email, cfg.remark),
+    )
+    await callback.answer(t.QR_SENT)
 
 
 @router.message(F.text == btn.SUPPORT)
