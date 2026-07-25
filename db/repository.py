@@ -7,7 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.utils.panel_url import normalize_http_url, normalize_sub_public_url
 from db.models import (
     ClientRecord,
+    GuestOrder,
+    GuestSalesConfig,
     Panel,
+    Plan,
     Reseller,
     ResellerPanel,
     ServiceTemplate,
@@ -37,6 +40,30 @@ def validate_template_params(volume_gb: float, expiry_days: int) -> None:
         raise InvalidTemplateError("حجم باید بزرگ‌تر از صفر باشد.")
     if expiry_days < 0:
         raise InvalidTemplateError("روز انقضا نمی‌تواند منفی باشد.")
+
+
+class InvalidPlanError(ValueError):
+    pass
+
+
+def normalize_plan_name(raw: str) -> str:
+    name = raw.strip()
+    if not name:
+        raise InvalidPlanError("نام پلن نمی‌تواند خالی باشد.")
+    if len(name) > _MAX_TEMPLATE_NAME_LEN:
+        raise InvalidPlanError(
+            f"نام پلن حداکثر {_MAX_TEMPLATE_NAME_LEN} کاراکتر باشد."
+        )
+    return name
+
+
+def validate_plan_params(volume_gb: float, expiry_days: int, price_toman: int) -> None:
+    if volume_gb <= 0:
+        raise InvalidPlanError("حجم باید بزرگ‌تر از صفر باشد.")
+    if expiry_days < 0:
+        raise InvalidPlanError("روز انقضا نمی‌تواند منفی باشد.")
+    if price_toman <= 0:
+        raise InvalidPlanError("قیمت باید بزرگ‌تر از صفر باشد.")
 
 _UNSET_MAX_CLIENTS: object = object()
 _UNSET_INBOUNDS: object = object()
@@ -113,13 +140,17 @@ class ResellerRepository:
         return await self.session.get(Reseller, telegram_id)
 
     async def list_all(self) -> list[Reseller]:
-        result = await self.session.scalars(select(Reseller).order_by(Reseller.created_at))
+        result = await self.session.scalars(
+            select(Reseller)
+            .where(Reseller.is_system.is_(False))
+            .order_by(Reseller.created_at)
+        )
         return list(result.all())
 
     async def list_active(self) -> list[Reseller]:
         result = await self.session.scalars(
             select(Reseller)
-            .where(Reseller.is_active.is_(True))
+            .where(Reseller.is_active.is_(True), Reseller.is_system.is_(False))
             .order_by(Reseller.created_at)
         )
         return list(result.all())
@@ -1004,3 +1035,220 @@ class ServiceTemplateRepository:
             )
         )
         return list(result.all())
+
+
+class PlanHasPendingOrdersError(ValueError):
+    def __init__(self, count: int) -> None:
+        self.count = count
+        super().__init__(count)
+
+
+class PlanRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def list_active(self) -> list[Plan]:
+        result = await self.session.scalars(
+            select(Plan)
+            .where(Plan.is_active.is_(True))
+            .order_by(Plan.sort_order, Plan.id)
+        )
+        return list(result.all())
+
+    async def get_active(self, plan_id: int) -> Plan | None:
+        row = await self.session.get(Plan, plan_id)
+        if row is None or not row.is_active:
+            return None
+        return row
+
+    async def list_all(self) -> list[Plan]:
+        result = await self.session.scalars(
+            select(Plan).order_by(Plan.sort_order, Plan.id)
+        )
+        return list(result.all())
+
+    async def create(
+        self,
+        name: str,
+        volume_gb: float,
+        expiry_days: int,
+        price_toman: int,
+        *,
+        sort_order: int | None = None,
+    ) -> Plan:
+        name = normalize_plan_name(name)
+        validate_plan_params(volume_gb, expiry_days, price_toman)
+        if sort_order is None:
+            max_sort = await self.session.scalar(select(func.max(Plan.sort_order)))
+            sort_order = (max_sort or 0) + 1
+        row = Plan(
+            name=name,
+            volume_gb=volume_gb,
+            expiry_days=expiry_days,
+            price_toman=price_toman,
+            sort_order=sort_order,
+            is_active=True,
+        )
+        self.session.add(row)
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def set_active(self, plan_id: int, active: bool) -> Plan | None:
+        row = await self.session.get(Plan, plan_id)
+        if row is None:
+            return None
+        row.is_active = active
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def delete(self, plan_id: int) -> bool:
+        row = await self.session.get(Plan, plan_id)
+        if row is None:
+            return False
+        pending = await self.session.scalar(
+            select(func.count())
+            .select_from(GuestOrder)
+            .where(GuestOrder.plan_id == plan_id, GuestOrder.status == "pending")
+        )
+        if pending:
+            raise PlanHasPendingOrdersError(int(pending))
+        await self.session.delete(row)
+        await self.session.commit()
+        return True
+
+
+class GuestOrderRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def create(
+        self,
+        telegram_id: int,
+        plan_id: int,
+        *,
+        username: str | None = None,
+        receipt_kind: str,
+        receipt_file_id: str | None = None,
+        receipt_text: str | None = None,
+    ) -> GuestOrder:
+        row = GuestOrder(
+            telegram_id=telegram_id,
+            username=username,
+            plan_id=plan_id,
+            status="pending",
+            receipt_kind=receipt_kind,
+            receipt_file_id=receipt_file_id,
+            receipt_text=receipt_text,
+        )
+        self.session.add(row)
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def get(self, order_id: int) -> GuestOrder | None:
+        return await self.session.get(GuestOrder, order_id)
+
+    async def list_pending(self) -> list[GuestOrder]:
+        result = await self.session.scalars(
+            select(GuestOrder)
+            .where(GuestOrder.status == "pending")
+            .order_by(GuestOrder.created_at)
+        )
+        return list(result.all())
+
+    async def count_pending_for_plan(self, plan_id: int) -> int:
+        result = await self.session.scalar(
+            select(func.count())
+            .select_from(GuestOrder)
+            .where(GuestOrder.plan_id == plan_id, GuestOrder.status == "pending")
+        )
+        return int(result or 0)
+
+    async def get_pending_for_user(self, telegram_id: int) -> GuestOrder | None:
+        return await self.session.scalar(
+            select(GuestOrder)
+            .where(
+                GuestOrder.telegram_id == telegram_id,
+                GuestOrder.status == "pending",
+            )
+            .order_by(GuestOrder.created_at.desc(), GuestOrder.id.desc())
+        )
+
+    async def list_for_telegram_id(
+        self, telegram_id: int, limit: int = 10
+    ) -> list[GuestOrder]:
+        result = await self.session.scalars(
+            select(GuestOrder)
+            .where(GuestOrder.telegram_id == telegram_id)
+            .order_by(GuestOrder.created_at.desc(), GuestOrder.id.desc())
+            .limit(limit)
+        )
+        return list(result.all())
+
+    async def mark_approved(
+        self, order_id: int, client_record_id: int
+    ) -> GuestOrder | None:
+        row = await self.get(order_id)
+        if row is None:
+            return None
+        row.status = "approved"
+        row.client_record_id = client_record_id
+        row.decided_at = datetime.now(timezone.utc)
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def mark_rejected(
+        self, order_id: int, reason: str | None = None
+    ) -> GuestOrder | None:
+        row = await self.get(order_id)
+        if row is None:
+            return None
+        row.status = "rejected"
+        row.reject_reason = reason
+        row.decided_at = datetime.now(timezone.utc)
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+
+class GuestSalesConfigRepository:
+    _SINGLETON_ID = 1
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def get_or_create(self) -> GuestSalesConfig:
+        row = await self.session.get(GuestSalesConfig, self._SINGLETON_ID)
+        if row is None:
+            row = GuestSalesConfig(id=self._SINGLETON_ID, is_enabled=False)
+            self.session.add(row)
+            await self.session.commit()
+            await self.session.refresh(row)
+        return row
+
+    async def update(
+        self,
+        *,
+        panel_id: int | None = None,
+        inbound_ids: list[int] | None = None,
+        card_number: str | None = None,
+        card_holder: str | None = None,
+        is_enabled: bool | None = None,
+    ) -> GuestSalesConfig:
+        row = await self.get_or_create()
+        if panel_id is not None:
+            row.panel_id = panel_id
+        if inbound_ids is not None:
+            row.inbound_ids = inbound_ids_to_json(inbound_ids)
+        if card_number is not None:
+            row.card_number = card_number
+        if card_holder is not None:
+            row.card_holder = card_holder
+        if is_enabled is not None:
+            row.is_enabled = is_enabled
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row

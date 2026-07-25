@@ -9,7 +9,9 @@ def _service_callbacks(kb) -> list[str]:
         btn.callback_data
         for row in kb.inline_keyboard
         for btn in row
-        if btn.callback_data and not btn.callback_data.startswith("svc:pg:")
+        if btn.callback_data
+        and not btn.callback_data.startswith("svc:pg:")
+        and not btn.callback_data.startswith("svc:search")
     ]
 
 
@@ -62,3 +64,30 @@ def test_three_pages_last_page() -> None:
     assert "svc:pg:1" in nav
     assert "svc:pg:2" in nav
     assert "svc:pg:3" not in nav
+
+
+def _search_callbacks(kb) -> list[str]:
+    return [
+        btn.callback_data
+        for row in kb.inline_keyboard
+        for btn in row
+        if btn.callback_data and btn.callback_data.startswith("svc:search")
+    ]
+
+
+def test_no_query_shows_only_search_button() -> None:
+    emails = [f"user{i}" for i in range(3)]
+    kb = service_list_kb(emails, page=0)
+    assert _search_callbacks(kb) == ["svc:search"]
+
+
+def test_active_query_shows_search_and_clear_buttons() -> None:
+    emails = [f"user{i}" for i in range(3)]
+    kb = service_list_kb(emails, page=0, query="user1")
+    assert set(_search_callbacks(kb)) == {"svc:search", "svc:search:clear"}
+
+
+def test_empty_result_with_query_still_offers_clear() -> None:
+    kb = service_list_kb([], page=0, query="nomatch")
+    assert _service_callbacks(kb) == []
+    assert set(_search_callbacks(kb)) == {"svc:search", "svc:search:clear"}

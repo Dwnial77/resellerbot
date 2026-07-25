@@ -90,6 +90,22 @@ EDIT_LIMIT_IP = "🔢 limitIp"
 EDIT_COMMENT = "💬 کامنت"
 ADD_DAYS = "➕ افزودن روز"
 NEW_DATE = "📅 تاریخ جدید"
+SEARCH = "🔍 جستجو"
+CLEAR_SEARCH = "❌ حذف فیلتر"
+
+# Guest plans (admin)
+GUEST_PLANS = "🛍 پلن‌های میهمان"
+GUEST_SALES_SETTINGS = "⚙️ تنظیمات فروش میهمان"
+ADD_PLAN = "➕ افزودن پلن جدید"
+REGISTER_PLAN = "✅ ثبت پلن"
+CHANGE_GUEST_PANEL = "🔄 تغییر پنل/اینباند"
+CHANGE_CARD_NUMBER = "💳 تغییر شماره کارت"
+CHANGE_CARD_HOLDER = "🏷 تغییر نام صاحب کارت"
+
+# Guest (buyer-facing)
+BUY_ACCOUNT = "🛒 خرید اکانت"
+MY_ORDERS = "📦 سفارش‌های من"
+SUPPORT = "🆘 پشتیبانی"
 
 
 def active_toggle_label(*, is_active: bool) -> str:
@@ -98,6 +114,14 @@ def active_toggle_label(*, is_active: bool) -> str:
 
 def panel_create_toggle_label(*, allowed: bool) -> str:
     return "⏸ ممنوع کردن ساخت" if allowed else "🔛 مجاز کردن ساخت"
+
+
+def guest_sales_toggle_label(*, is_enabled: bool) -> str:
+    return "⏸ غیرفعال کردن فروش" if is_enabled else "🔛 فعال کردن فروش"
+
+
+def plan_toggle_label(*, is_active: bool) -> str:
+    return "⏸ غیرفعال کردن" if is_active else "🔛 فعال کردن"
 
 
 def reseller_hub_row_label(

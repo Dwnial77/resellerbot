@@ -3,7 +3,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardBu
 from bot.keyboards import labels as L
 from bot.utils.format_delivery import config_display_label
 from bot.utils.report_format import format_report_button_label, usage_percent_int
-from db.models import Panel, Reseller, ServiceTemplate
+from db.models import GuestSalesConfig, Panel, Plan, Reseller, ServiceTemplate
 from services.client_volume import MIN_CLIENT_VOLUME_GB
 from xui.client import VlessConfig
 
@@ -19,6 +19,16 @@ def reseller_main_kb() -> ReplyKeyboardMarkup:
                 KeyboardButton(text=L.MY_SERVICES),
             ],
             [KeyboardButton(text=L.ACCOUNT_STATUS)],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def guest_main_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=L.BUY_ACCOUNT), KeyboardButton(text=L.MY_ORDERS)],
+            [KeyboardButton(text=L.SUPPORT)],
         ],
         resize_keyboard=True,
     )
@@ -42,6 +52,10 @@ def admin_main_kb() -> ReplyKeyboardMarkup:
             [
                 KeyboardButton(text=L.BACKUP),
                 KeyboardButton(text=L.BROADCAST),
+            ],
+            [
+                KeyboardButton(text=L.GUEST_PLANS),
+                KeyboardButton(text=L.GUEST_SALES_SETTINGS),
             ],
             [
                 KeyboardButton(text=L.ADMIN_HELP),
@@ -1087,10 +1101,202 @@ def template_wizard_confirm_kb() -> InlineKeyboardMarkup:
     )
 
 
+def plan_admin_hub_kb(plans: list[Plan]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for p in plans:
+        label = p.name if len(p.name) <= 24 else p.name[:21] + "..."
+        status = "🟢" if p.is_active else "🔴"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{status} {label}",
+                    callback_data=f"aplan:toggle:{p.id}",
+                ),
+                InlineKeyboardButton(
+                    text="🗑",
+                    callback_data=f"aplan:del:{p.id}",
+                ),
+            ]
+        )
+    rows.append([InlineKeyboardButton(text=L.ADD_PLAN, callback_data="aplan:add")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def plan_delete_confirm_kb(plan_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.YES_DELETE,
+                    callback_data=f"aplan:del_yes:{plan_id}",
+                ),
+                InlineKeyboardButton(text=L.NO, callback_data="aplan:hub"),
+            ],
+        ]
+    )
+
+
+def plan_wizard_volume_kb() -> InlineKeyboardMarkup:
+    volumes = (5, 10, 20, 50, 100)
+    row = [
+        InlineKeyboardButton(text=f"{v} GB", callback_data=f"aplan:vol:{v}")
+        for v in volumes
+    ]
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            row,
+            [InlineKeyboardButton(text=L.CANCEL, callback_data="aplan:wiz_cancel")],
+        ]
+    )
+
+
+def plan_wizard_expiry_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="7 روز", callback_data="aplan:exp:7"),
+                InlineKeyboardButton(text="30 روز", callback_data="aplan:exp:30"),
+                InlineKeyboardButton(text="90 روز", callback_data="aplan:exp:90"),
+            ],
+            [
+                InlineKeyboardButton(text="180 روز", callback_data="aplan:exp:180"),
+                InlineKeyboardButton(text="365 روز", callback_data="aplan:exp:365"),
+            ],
+            [InlineKeyboardButton(text=L.UNLIMITED_EXPIRY, callback_data="aplan:exp:0")],
+            [InlineKeyboardButton(text=L.CANCEL, callback_data="aplan:wiz_cancel")],
+        ]
+    )
+
+
+def plan_wizard_name_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.USE_SUGGESTED_NAME,
+                    callback_data="aplan:use_suggested_name",
+                )
+            ],
+            [InlineKeyboardButton(text=L.CANCEL, callback_data="aplan:wiz_cancel")],
+        ]
+    )
+
+
+def plan_wizard_price_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=L.CANCEL, callback_data="aplan:wiz_cancel")],
+        ]
+    )
+
+
+def plan_wizard_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.REGISTER_PLAN, callback_data="aplan:wiz_save"
+                ),
+                InlineKeyboardButton(text=L.CANCEL, callback_data="aplan:wiz_cancel"),
+            ],
+        ]
+    )
+
+
+def guest_plan_picker_kb(plans: list[Plan]) -> InlineKeyboardMarkup:
+    eligible = [p for p in plans if p.volume_gb >= MIN_CLIENT_VOLUME_GB]
+    rows: list[list[InlineKeyboardButton]] = []
+    for p in eligible:
+        label = f"{p.name} — {p.volume_gb}GB — {p.price_toman} تومان"
+        if len(label) > 40:
+            label = label[:37] + "..."
+        rows.append(
+            [InlineKeyboardButton(text=label, callback_data=f"gplan:{p.id}")]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def guest_order_review_kb(order_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ تأیید و تحویل", callback_data=f"gorder:approve:{order_id}"
+                ),
+                InlineKeyboardButton(
+                    text="❌ رد", callback_data=f"gorder:reject:{order_id}"
+                ),
+            ]
+        ]
+    )
+
+
+def guest_config_hub_kb(config: GuestSalesConfig) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.CHANGE_GUEST_PANEL, callback_data="gcfg:pick_panel"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.CHANGE_CARD_NUMBER, callback_data="gcfg:card_number"
+                ),
+                InlineKeyboardButton(
+                    text=L.CHANGE_CARD_HOLDER, callback_data="gcfg:card_holder"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.guest_sales_toggle_label(is_enabled=config.is_enabled),
+                    callback_data="gcfg:toggle",
+                )
+            ],
+        ]
+    )
+
+
+def guest_config_pick_panel_kb(panels: list[Panel]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for p in panels:
+        label = f"#{p.id} {p.name}"
+        if len(label) > 35:
+            label = label[:32] + "..."
+        rows.append(
+            [InlineKeyboardButton(text=label, callback_data=f"gcfg:pan:{p.id}")]
+        )
+    rows.append([InlineKeyboardButton(text=L.CANCEL, callback_data="gcfg:wiz_cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def guest_config_inbounds_kb(
+    inbounds: list[dict], selected: set[int]
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=_inbound_toggle_rows(
+            inbounds,
+            selected,
+            toggle_prefix="gcfg:ib:t:",
+            done_callback="gcfg:ib:done",
+            cancel_callback="gcfg:wiz_cancel",
+            done_label=L.CONTINUE,
+        )
+    )
+
+
 def create_cancel_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=L.CANCEL, callback_data="create:cancel")],
+        ]
+    )
+
+
+def service_search_cancel_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=L.CANCEL, callback_data="svc:search:cancel")],
         ]
     )
 
@@ -1138,7 +1344,9 @@ def confirm_create_kb() -> InlineKeyboardMarkup:
     )
 
 
-def service_list_kb(emails: list[str], *, page: int = 0) -> InlineKeyboardMarkup:
+def service_list_kb(
+    emails: list[str], *, page: int = 0, query: str | None = None
+) -> InlineKeyboardMarkup:
     total = len(emails)
     total_pages = max(1, (total + SERVICES_PAGE_SIZE - 1) // SERVICES_PAGE_SIZE)
     page = max(0, min(page, total_pages - 1))
@@ -1173,6 +1381,20 @@ def service_list_kb(emails: list[str], *, page: int = 0) -> InlineKeyboardMarkup
                 )
             )
         rows.append(nav)
+
+    if query:
+        rows.append(
+            [
+                InlineKeyboardButton(text=L.SEARCH, callback_data="svc:search"),
+                InlineKeyboardButton(
+                    text=L.CLEAR_SEARCH, callback_data="svc:search:clear"
+                ),
+            ]
+        )
+    else:
+        rows.append(
+            [InlineKeyboardButton(text=L.SEARCH, callback_data="svc:search")]
+        )
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

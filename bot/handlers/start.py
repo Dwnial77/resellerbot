@@ -3,9 +3,9 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
 from bot.config import get_settings
-from bot.keyboards.common import admin_main_kb, reseller_main_kb
+from bot.keyboards.common import admin_main_kb, guest_main_kb, reseller_main_kb
 from bot.texts import fa as t
-from db.repository import ResellerRepository
+from db.repository import GuestSalesConfigRepository, ResellerRepository
 from db.session import get_session_factory
 from bot.utils.reseller_welcome import format_reseller_welcome
 
@@ -23,6 +23,10 @@ async def cmd_start(message: Message) -> None:
         repo = ResellerRepository(session)
         reseller = await repo.get(message.from_user.id)  # type: ignore[union-attr]
         if not reseller or not reseller.is_active:
+            guest_config = await GuestSalesConfigRepository(session).get_or_create()
+            if guest_config.is_enabled:
+                await message.answer(t.GUEST_WELCOME, reply_markup=guest_main_kb())
+                return
             await message.answer(t.NOT_RESELLER)
             return
         welcome = await format_reseller_welcome(session, reseller)

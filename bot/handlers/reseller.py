@@ -19,6 +19,7 @@ from bot.keyboards.common import (
     reduce_traffic_volume_kb,
     service_detail_kb,
     service_edit_kb,
+    service_search_cancel_kb,
     SERVICES_PAGE_SIZE,
     service_list_kb,
     template_picker_kb,
@@ -30,6 +31,7 @@ from bot.states import (
     EditServiceStates,
     ExtendExpiryStates,
     ReduceTrafficStates,
+    SearchServiceStates,
 )
 from bot.texts import fa as t
 from bot.utils.edit_service import (
@@ -572,6 +574,9 @@ async def confirm_create_stale(callback: CallbackQuery) -> None:
     )
 
 
+MAX_SEARCH_QUERY_LEN = 40
+
+
 async def _accessible_service_emails(
     session, registry: PanelRegistry, reseller_tg_id: int
 ) -> list[str]:
@@ -579,10 +584,26 @@ async def _accessible_service_emails(
     return [c.email for c in clients]
 
 
-def _format_service_list_text(total: int, page: int) -> str:
-    start = page * SERVICES_PAGE_SIZE + 1
+def _normalize_search_query(raw: str) -> str:
+    return (raw or "").strip()[:MAX_SEARCH_QUERY_LEN]
+
+
+def _filter_emails(emails: list[str], query: str | None) -> list[str]:
+    q = (query or "").strip().lower()
+    if not q:
+        return emails
+    return [e for e in emails if q in e.lower()]
+
+
+def _format_service_list_text(total: int, page: int, query: str | None = None) -> str:
+    start = page * SERVICES_PAGE_SIZE + 1 if total else 0
     end = min((page + 1) * SERVICES_PAGE_SIZE, total)
-    header = t.SERVICE_LIST_HEADER.format(start=start, end=end, total=total)
+    if query:
+        header = t.SERVICE_SEARCH_HEADER.format(
+            query=query, start=start, end=end, total=total
+        )
+    else:
+        header = t.SERVICE_LIST_HEADER.format(start=start, end=end, total=total)
     return f"{header}\nیکی را انتخاب کنید:"
 
 
@@ -591,10 +612,19 @@ async def _show_service_list(
     emails: list[str],
     page: int = 0,
     *,
+    query: str | None = None,
     edit: bool = False,
 ) -> None:
-    text = _format_service_list_text(len(emails), page)
-    markup = service_list_kb(emails, page=page)
+    if query and not emails:
+        markup = service_list_kb([], page=0, query=query)
+        text = t.SEARCH_NO_RESULTS.format(query=query)
+        if edit:
+            await message.edit_text(text, reply_markup=markup)
+        else:
+            await message.answer(text, reply_markup=markup)
+        return
+    text = _format_service_list_text(len(emails), page, query)
+    markup = service_list_kb(emails, page=page, query=query)
     if edit:
         await message.edit_text(text, reply_markup=markup)
     else:
@@ -602,7 +632,9 @@ async def _show_service_list(
 
 
 @router.message(F.text == btn.MY_SERVICES)
-async def my_services(message: Message, panel_registry: PanelRegistry) -> None:
+async def my_services(
+    message: Message, state: FSMContext, panel_registry: PanelRegistry
+) -> None:
     if not message.from_user:
         return
     async with get_session_factory()() as session:
@@ -618,12 +650,14 @@ async def my_services(message: Message, panel_registry: PanelRegistry) -> None:
     if not emails:
         await message.answer(t.NO_ACCESSIBLE_SERVICES)
         return
-    await _show_service_list(message, emails, page=0)
+    data = await state.get_data()
+    query = data.get("service_search_query")
+    await _show_service_list(message, _filter_emails(emails, query), page=0, query=query)
 
 
 @router.callback_query(F.data == "svc:back")
 async def services_back(
-    callback: CallbackQuery, panel_registry: PanelRegistry
+    callback: CallbackQuery, state: FSMContext, panel_registry: PanelRegistry
 ) -> None:
     if not callback.from_user or not callback.message:
         await callback.answer()
@@ -635,15 +669,17 @@ async def services_back(
     if not emails:
         await callback.message.edit_text(t.NO_ACCESSIBLE_SERVICES)  # type: ignore[union-attr]
     else:
+        data = await state.get_data()
+        query = data.get("service_search_query")
         await _show_service_list(
-            callback.message, emails, page=0, edit=True  # type: ignore[arg-type]
+            callback.message, _filter_emails(emails, query), page=0, query=query, edit=True  # type: ignore[arg-type]
         )
     await callback.answer()
 
 
 @router.callback_query(F.data.regexp(r"^svc:pg:\d+$"))
 async def services_page(
-    callback: CallbackQuery, panel_registry: PanelRegistry
+    callback: CallbackQuery, state: FSMContext, panel_registry: PanelRegistry
 ) -> None:
     if not callback.from_user or not callback.message:
         await callback.answer()
@@ -661,9 +697,87 @@ async def services_page(
         await callback.message.edit_text(t.NO_ACCESSIBLE_SERVICES)  # type: ignore[union-attr]
         await callback.answer()
         return
+    data = await state.get_data()
+    query = data.get("service_search_query")
     await _show_service_list(
-        callback.message, emails, page=page, edit=True  # type: ignore[arg-type]
+        callback.message, _filter_emails(emails, query), page=page, query=query, edit=True  # type: ignore[arg-type]
     )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "svc:search")
+async def service_search_start(callback: CallbackQuery, state: FSMContext) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    await state.set_state(SearchServiceStates.query)
+    await callback.message.edit_text(  # type: ignore[union-attr]
+        t.SEARCH_SERVICE_PROMPT,
+        reply_markup=service_search_cancel_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(SearchServiceStates.query)
+async def service_search_input(
+    message: Message, state: FSMContext, panel_registry: PanelRegistry
+) -> None:
+    if not message.from_user:
+        return
+    query = _normalize_search_query(message.text or "")
+    if not query:
+        await message.answer(t.INVALID_INPUT)
+        return
+    await state.update_data(service_search_query=query)
+    await state.set_state(None)
+    async with get_session_factory()() as session:
+        emails = await _accessible_service_emails(
+            session, panel_registry, message.from_user.id
+        )
+    await _show_service_list(message, _filter_emails(emails, query), page=0, query=query)
+
+
+@router.callback_query(F.data == "svc:search:clear")
+async def service_search_clear(
+    callback: CallbackQuery, state: FSMContext, panel_registry: PanelRegistry
+) -> None:
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    await state.update_data(service_search_query=None)
+    async with get_session_factory()() as session:
+        emails = await _accessible_service_emails(
+            session, panel_registry, callback.from_user.id
+        )
+    if not emails:
+        await callback.message.edit_text(t.NO_ACCESSIBLE_SERVICES)  # type: ignore[union-attr]
+    else:
+        await _show_service_list(
+            callback.message, emails, page=0, query=None, edit=True  # type: ignore[arg-type]
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "svc:search:cancel")
+async def service_search_cancel(
+    callback: CallbackQuery, state: FSMContext, panel_registry: PanelRegistry
+) -> None:
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    await state.set_state(None)
+    async with get_session_factory()() as session:
+        emails = await _accessible_service_emails(
+            session, panel_registry, callback.from_user.id
+        )
+    data = await state.get_data()
+    query = data.get("service_search_query")
+    if not emails:
+        await callback.message.edit_text(t.NO_ACCESSIBLE_SERVICES)  # type: ignore[union-attr]
+    else:
+        await _show_service_list(
+            callback.message, _filter_emails(emails, query), page=0, query=query, edit=True  # type: ignore[arg-type]
+        )
     await callback.answer()
 
 

@@ -85,3 +85,30 @@ class BackupRestoreStates(StatesGroup):
 class BroadcastStates(StatesGroup):
     message = State()
     confirm = State()
+
+
+class SearchServiceStates(StatesGroup):
+    query = State()
+
+
+class AddPlanStates(StatesGroup):
+    name = State()
+    volume = State()
+    expiry = State()
+    price = State()
+    confirm = State()
+
+
+class GuestConfigStates(StatesGroup):
+    pick_panel = State()
+    pick_inbounds = State()
+    card_number = State()
+    card_holder = State()
+
+
+class GuestPurchaseStates(StatesGroup):
+    receipt = State()
+
+
+class GuestSupportStates(StatesGroup):
+    message = State()

@@ -60,6 +60,7 @@ class Reseller(Base):
     attach_inbound_ids: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     max_clients: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -163,3 +164,60 @@ class ServiceTemplate(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class Plan(Base):
+    """Admin-defined, guest-purchasable offer (volume + expiry + price)."""
+
+    __tablename__ = "plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    volume_gb: Mapped[float] = mapped_column(Float, nullable=False)
+    expiry_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    price_toman: Mapped[int] = mapped_column(Integer, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class GuestOrder(Base):
+    """A guest's purchase attempt for a Plan, pending manual admin approval."""
+
+    __tablename__ = "guest_orders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    plan_id: Mapped[int] = mapped_column(Integer, ForeignKey("plans.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    receipt_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    receipt_file_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    receipt_text: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    client_record_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("client_records.id"), nullable=True
+    )
+    reject_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class GuestSalesConfig(Base):
+    """Singleton settings row for the guest self-service sales channel."""
+
+    __tablename__ = "guest_sales_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    panel_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("panels.id"), nullable=True
+    )
+    inbound_ids: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    card_number: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    card_holder: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

@@ -84,6 +84,9 @@ NO_ACCESSIBLE_SERVICES = (
     "سرویس فعالی روی پنل‌های در دسترس ندارید. با ادمین تماس بگیرید."
 )
 SERVICE_LIST_HEADER = "سرویس‌های شما ({start}–{end} از {total}):"
+SEARCH_SERVICE_PROMPT = "بخشی از نام/ایمیل سرویس مورد نظر را ارسال کنید:"
+SERVICE_SEARCH_HEADER = "نتایج جستجو برای «{query}» ({start}–{end} از {total}):"
+SEARCH_NO_RESULTS = "هیچ سرویسی با «{query}» یافت نشد."
 
 PANEL_LIST_HEADER = "پنل‌های 3x-ui:"
 PANEL_LIST_EMPTY = "پنلی ثبت نشده است."
@@ -372,6 +375,105 @@ TEMPLATE_WIZARD_CONFIRM = (
     "ثبت شود؟"
 )
 TEMPLATE_WIZARD_CANCELLED = "افزودن قالب لغو شد."
+
+PLAN_ADDED = (
+    "پلن #{id} ثبت شد: {name}\n"
+    "حجم: {volume_gb} GB | انقضا: {expiry_label} | قیمت: {price_toman} تومان"
+)
+PLAN_LIST_HEADER = "پلن‌های فروش عمومی (میهمان):"
+PLAN_LIST_EMPTY = "پلنی ثبت نشده است."
+PLAN_DELETED = "پلن #{id} حذف شد."
+PLAN_NOT_FOUND = "پلن یافت نشد."
+PLAN_HUB_HINT = "برای افزودن پلن، دکمه «افزودن پلن جدید» را بزنید."
+PLAN_DELETE_CONFIRM = (
+    "حذف پلن #{id}؟\n"
+    "{name} — {volume_gb} GB — {expiry_label} — {price_toman} تومان"
+)
+PLAN_DELETE_BLOCKED_PENDING = (
+    "این پلن {count} سفارش در انتظار بررسی دارد؛ ابتدا آن‌ها را تأیید/رد کنید "
+    "یا به‌جای حذف، پلن را غیرفعال کنید."
+)
+PLAN_WIZARD_VOLUME = (
+    "مرحله ۱ از ۴ — حجم پلن (گیگابایت):\n"
+    "یکی از دکمه‌ها را بزنید یا عدد را بنویسید (مثلاً 10):"
+)
+PLAN_WIZARD_EXPIRY = (
+    "مرحله ۲ از ۴ — مدت انقضا:\n"
+    "یکی از دکمه‌ها را بزنید یا تعداد روز را بنویسید (0 = نامحدود):"
+)
+PLAN_WIZARD_NAME = (
+    "مرحله ۳ از ۴ — نام پلن:\n"
+    "این متن به کاربر میهمان نمایش داده می‌شود.\n"
+    "پیشنهاد: `{suggested}`\n\n"
+    "نام را بنویسید یا «استفاده از نام پیشنهادی» را بزنید."
+)
+PLAN_WIZARD_PRICE = "مرحله ۴ از ۴ — قیمت (تومان):\nعدد را بنویسید (مثلاً 150000):"
+PLAN_WIZARD_CONFIRM = (
+    "تأیید ثبت پلن:\n"
+    "نام: {name}\n"
+    "حجم: {volume_gb} GB\n"
+    "انقضا: {expiry_label}\n"
+    "قیمت: {price_toman} تومان\n\n"
+    "ثبت شود؟"
+)
+PLAN_WIZARD_CANCELLED = "افزودن پلن لغو شد."
+
+GUEST_WELCOME = "به ربات خوش آمدید!\nبرای خرید اکانت روی «🛒 خرید اکانت» بزنید."
+GUEST_SALES_DISABLED = "فروش مستقیم فعلاً فعال نیست. با ادمین تماس بگیرید."
+GUEST_NO_PLANS = "فعلاً پلنی برای خرید موجود نیست. بعداً امتحان کنید."
+GUEST_PLAN_LIST_HEADER = "🛒 پلن‌های موجود:\nیکی را انتخاب کنید:"
+GUEST_PAYMENT_PROMPT = (
+    "پلن انتخابی: {name} — {volume_gb} GB — {expiry_label} — {price_toman} تومان\n\n"
+    "مبلغ {price_toman} تومان را به کارت زیر واریز کنید:\n"
+    "شماره کارت: `{card_number}`\n"
+    "به‌نام: {card_holder}\n\n"
+    "سپس رسید پرداخت را (عکس یا متن) ارسال کنید."
+)
+GUEST_ORDER_SUBMITTED = (
+    "سفارش شما ثبت شد و برای بررسی برای ادمین ارسال شد.\n"
+    "پس از تأیید، اکانت شما ارسال می‌شود."
+)
+GUEST_ORDER_ADMIN_NOTIFY = (
+    "🛒 سفارش جدید #{order_id}\n"
+    "کاربر: {telegram_id}{username}\n"
+    "پلن: {name} — {volume_gb} GB — {expiry_label} — {price_toman} تومان"
+)
+GUEST_ORDER_APPROVED_ADMIN = "✅ سفارش #{order_id} تحویل داده شد به {telegram_id}."
+GUEST_ORDER_REJECTED_ADMIN = "❌ سفارش #{order_id} رد شد."
+GUEST_ORDER_REJECTED = "متأسفانه سفارش شما رد شد. برای پیگیری با ادمین تماس بگیرید."
+GUEST_ORDER_NOT_FOUND = "سفارش یافت نشد."
+GUEST_ORDER_NOT_PENDING = "این سفارش قبلاً بررسی شده است."
+GUEST_ORDER_NOT_CONFIGURED = (
+    "ابتدا پنل و اینباند فروش عمومی را از «تنظیمات فروش میهمان» مشخص کنید."
+)
+GUEST_ORDER_PLAN_DELETED = "پلن این سفارش دیگر موجود نیست."
+GUEST_ORDER_ALREADY_PENDING = (
+    "شما یک سفارش در انتظار بررسی دارید (#{order_id} — {plan_name}).\n"
+    "لطفاً تا تأیید یا رد آن صبر کنید."
+)
+GUEST_MY_ORDERS_HEADER = "📦 سفارش‌های شما:"
+GUEST_MY_ORDERS_EMPTY = "هنوز سفارشی ثبت نکرده‌اید."
+
+SUPPORT_PROMPT = "مشکلت رو بنویس (یا عکس/اسکرین‌شات بفرست):"
+SUPPORT_SENT = "پیام شما برای ادمین ارسال شد."
+SUPPORT_ADMIN_NOTIFY = "🆘 پیام پشتیبانی از {telegram_id}{username}:\n\n{text}"
+
+GUEST_CONFIG_HUB = (
+    "⚙️ تنظیمات فروش میهمان\n\n"
+    "وضعیت: {status}\n"
+    "پنل: {panel_label}\n"
+    "اینباندها: {inbound_label}\n"
+    "شماره کارت: {card_number_label}\n"
+    "به‌نام: {card_holder_label}"
+)
+GUEST_CONFIG_PICK_PANEL = "پنل فروش میهمان را انتخاب کنید:"
+GUEST_CONFIG_PICK_INBOUNDS = (
+    "اینباندهای مجاز فروش میهمان را انتخاب کنید:\n"
+    "روی هر اینباند بزنید تا انتخاب/لغو شود؛ سپس «ادامه»."
+)
+GUEST_CONFIG_CARD_NUMBER_PROMPT = "شماره کارت را وارد کنید:"
+GUEST_CONFIG_CARD_HOLDER_PROMPT = "نام صاحب کارت را وارد کنید:"
+GUEST_CONFIG_SAVED = "تنظیمات فروش میهمان به‌روزرسانی شد."
 
 CREATE_PICK_TEMPLATE = (
     "یک قالب آماده انتخاب کنید، یا «ورود دستی» برای وارد کردن حجم و انقضا.\n"

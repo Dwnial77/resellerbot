@@ -284,6 +284,17 @@ def migrate_008_unified_reseller_quota(sync_conn: Any) -> None:
     )
 
 
+def migrate_009_resellers_is_system(sync_conn: Any) -> None:
+    cursor = sync_conn.execute(text("PRAGMA table_info(resellers)"))
+    columns = [row[1] for row in cursor.fetchall()]
+    if "is_system" not in columns:
+        sync_conn.execute(
+            text(
+                "ALTER TABLE resellers ADD COLUMN is_system BOOLEAN NOT NULL DEFAULT 0"
+            )
+        )
+
+
 MIGRATIONS.extend(
     [
         (1, migrate_001_client_records_sub_id),
@@ -294,6 +305,7 @@ MIGRATIONS.extend(
         (6, migrate_006_resellers_lifetime_allocated),
         (7, migrate_007_reseller_panels),
         (8, migrate_008_unified_reseller_quota),
+        (9, migrate_009_resellers_is_system),
     ]
 )
 
