@@ -10,6 +10,7 @@ ADMIN_HELP = "❓ راهنمای ادمین"
 BROADCAST = "📢 پیام همگانی"
 BOT_UPDATE = "⬆️ آپدیت ربات"
 BACKUP = "💾 پشتیبان"
+PREVIEW_GUEST_MODE = "👁 پیش‌نمایش حالت میهمان"
 
 # Reply keyboard — reseller
 CREATE_SERVICE = "✨ ساخت سرویس"

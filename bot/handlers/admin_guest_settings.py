@@ -6,7 +6,12 @@ from aiogram.types import CallbackQuery, Message
 
 from bot.handlers.admin import _is_admin
 from bot.keyboards import labels as btn
-from bot.keyboards.common import guest_config_hub_kb, guest_config_inbounds_kb, guest_config_pick_panel_kb
+from bot.keyboards.common import (
+    guest_config_hub_kb,
+    guest_config_inbounds_kb,
+    guest_config_pick_panel_kb,
+    guest_main_kb,
+)
 from bot.states import GuestConfigStates
 from bot.texts import fa as t
 from db.repository import GuestSalesConfigRepository, PanelRepository, inbound_ids_from_json
@@ -51,6 +56,13 @@ async def guest_settings_hub(message: Message, state: FSMContext) -> None:
         return
     await state.clear()
     await _send_hub(message)
+
+
+@router.message(F.text == btn.PREVIEW_GUEST_MODE)
+async def preview_guest_mode(message: Message) -> None:
+    if not _is_admin(message.from_user.id if message.from_user else None):
+        return
+    await message.answer(t.ADMIN_GUEST_PREVIEW_NOTE, reply_markup=guest_main_kb())
 
 
 @router.callback_query(F.data == "gcfg:hub")

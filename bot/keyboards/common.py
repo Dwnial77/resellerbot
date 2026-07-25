@@ -58,6 +58,9 @@ def admin_main_kb() -> ReplyKeyboardMarkup:
                 KeyboardButton(text=L.GUEST_SALES_SETTINGS),
             ],
             [
+                KeyboardButton(text=L.PREVIEW_GUEST_MODE),
+            ],
+            [
                 KeyboardButton(text=L.ADMIN_HELP),
             ],
         ],
