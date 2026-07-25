@@ -351,7 +351,9 @@ TEMPLATE_NOT_FOUND = "قالب یافت نشد."
 TEMPLATE_HUB_HINT = "برای افزودن قالب، دکمه «افزودن قالب جدید» را بزنید."
 TEMPLATE_DELETE_CONFIRM = (
     "حذف قالب #{id}؟\n"
-    "{name} — {volume_gb} GB — {expiry_label}"
+    "{name}\n"
+    "حجم: {volume_gb} GB\n"
+    "انقضا: {expiry_label}"
 )
 TEMPLATE_WIZARD_VOLUME = (
     "مرحله ۱ از ۴ — حجم قالب (گیگابایت):\n"
@@ -387,7 +389,10 @@ PLAN_NOT_FOUND = "پلن یافت نشد."
 PLAN_HUB_HINT = "برای افزودن پلن، دکمه «افزودن پلن جدید» را بزنید."
 PLAN_DELETE_CONFIRM = (
     "حذف پلن #{id}؟\n"
-    "{name} — {volume_gb} GB — {expiry_label} — {price_toman} تومان"
+    "{name}\n"
+    "حجم: {volume_gb} GB\n"
+    "انقضا: {expiry_label}\n"
+    "قیمت: {price_toman} تومان"
 )
 PLAN_DELETE_BLOCKED_PENDING = (
     "این پلن {count} سفارش در انتظار بررسی دارد؛ ابتدا آن‌ها را تأیید/رد کنید "
@@ -428,7 +433,10 @@ GUEST_SALES_DISABLED = "فروش مستقیم فعلاً فعال نیست. با
 GUEST_NO_PLANS = "فعلاً پلنی برای خرید موجود نیست. بعداً امتحان کنید."
 GUEST_PLAN_LIST_HEADER = "🛒 پلن‌های موجود:\nیکی را انتخاب کنید:"
 GUEST_PAYMENT_PROMPT = (
-    "پلن انتخابی: {name} — {volume_gb} GB — {expiry_label} — {price_toman} تومان\n\n"
+    "پلن انتخابی: {name}\n"
+    "حجم: {volume_gb} GB\n"
+    "انقضا: {expiry_label}\n"
+    "قیمت: {price_toman} تومان\n\n"
     "مبلغ {price_toman} تومان را به کارت زیر واریز کنید:\n"
     "شماره کارت: `{card_number}`\n"
     "به‌نام: {card_holder}\n\n"
@@ -441,7 +449,10 @@ GUEST_ORDER_SUBMITTED = (
 GUEST_ORDER_ADMIN_NOTIFY = (
     "🛒 سفارش جدید #{order_id}\n"
     "کاربر: {telegram_id}{username}\n"
-    "پلن: {name} — {volume_gb} GB — {expiry_label} — {price_toman} تومان"
+    "پلن: {name}\n"
+    "حجم: {volume_gb} GB\n"
+    "انقضا: {expiry_label}\n"
+    "قیمت: {price_toman} تومان"
 )
 GUEST_ORDER_APPROVED_ADMIN = "✅ سفارش #{order_id} تحویل داده شد به {telegram_id}."
 GUEST_ORDER_REJECTED_ADMIN = "❌ سفارش #{order_id} رد شد."

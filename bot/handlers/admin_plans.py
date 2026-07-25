@@ -42,10 +42,12 @@ async def _plan_hub_content() -> tuple[str, object]:
         for r in rows:
             status = "فعال" if r.is_active else "غیرفعال"
             lines.append(
-                f"• #{r.id} — {r.name} — {r.volume_gb} GB — "
-                f"{expiry_label(r.expiry_days)} — {r.price_toman} تومان ({status})"
+                f"#{r.id} — {r.name} ({status})\n"
+                f"حجم: {r.volume_gb} GB\n"
+                f"انقضا: {expiry_label(r.expiry_days)}\n"
+                f"قیمت: {r.price_toman} تومان"
             )
-        text = "\n".join(lines)
+        text = "\n\n".join(lines)
     return text, plan_admin_hub_kb(rows)
 
 

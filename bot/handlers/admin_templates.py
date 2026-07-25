@@ -39,10 +39,11 @@ async def _template_hub_content() -> tuple[str, object]:
         lines = [t.TEMPLATE_LIST_HEADER]
         for r in rows:
             lines.append(
-                f"• #{r.id} — {r.name} — {r.volume_gb} GB — "
-                f"{expiry_label(r.expiry_days)}"
+                f"#{r.id} — {r.name}\n"
+                f"حجم: {r.volume_gb} GB\n"
+                f"انقضا: {expiry_label(r.expiry_days)}"
             )
-        text = "\n".join(lines)
+        text = "\n\n".join(lines)
     return text, template_admin_hub_kb(rows)
 
 

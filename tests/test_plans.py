@@ -3,6 +3,7 @@ import asyncio
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from bot.handlers.admin_plans import _plan_hub_content
 from bot.keyboards.common import guest_plan_picker_kb, plan_admin_hub_kb
 from db.models import Base, GuestOrder, Plan
 from db.repository import (
@@ -144,6 +145,38 @@ def test_delete_allowed_when_no_pending_orders(tmp_path) -> None:
             deleted = await PlanRepository(session).delete(plan.id)
             assert deleted is True
             assert await session.get(Plan, plan.id) is None
+
+        await engine.dispose()
+
+    asyncio.run(_run())
+
+
+def test_plan_hub_content_keeps_volume_and_expiry_on_separate_lines(tmp_path) -> None:
+    """Regression: cramming GB/days/price onto one RTL line garbled the digits
+    visually in Telegram (e.g. a 30-day/50GB plan rendered as "3050.0")."""
+
+    async def _run() -> None:
+        engine, factory = await _make_session_factory(tmp_path)
+        async with factory() as session:
+            await PlanRepository(session).create("50GB/30روز", 50, 30, 180000)
+
+        import bot.handlers.admin_plans as admin_plans_module
+
+        original_factory = admin_plans_module.get_session_factory
+        admin_plans_module.get_session_factory = lambda: factory
+        try:
+            text, _ = await _plan_hub_content()
+        finally:
+            admin_plans_module.get_session_factory = original_factory
+
+        lines = text.splitlines()
+        volume_line = next(l for l in lines if l.startswith("حجم:"))
+        expiry_line = next(l for l in lines if l.startswith("انقضا:"))
+        price_line = next(l for l in lines if l.startswith("قیمت:"))
+        assert volume_line != expiry_line != price_line
+        assert "روز" not in volume_line
+        assert "GB" not in expiry_line
+        assert "GB" not in price_line
 
         await engine.dispose()
 
