@@ -666,6 +666,17 @@ class ClientRepository:
             )
         )
 
+    async def get_for_reseller_id(
+        self, reseller_tg_id: int, record_id: int
+    ) -> ClientRecord | None:
+        """Ownership is enforced in the query — record ids are guessable."""
+        return await self.session.scalar(
+            select(ClientRecord).where(
+                ClientRecord.reseller_tg_id == reseller_tg_id,
+                ClientRecord.id == record_id,
+            )
+        )
+
     async def list_for_reseller_on_panels(
         self, reseller_tg_id: int, panel_ids: set[int] | list[int]
     ) -> list[ClientRecord]:
@@ -720,6 +731,20 @@ class ClientRepository:
 
     async def set_sub_id(self, record: ClientRecord, sub_id: str) -> ClientRecord:
         record.sub_id = sub_id
+        await self.session.commit()
+        await self.session.refresh(record)
+        return record
+
+    async def set_email(self, record: ClientRecord, email: str) -> ClientRecord:
+        record.email = email
+        await self.session.commit()
+        await self.session.refresh(record)
+        return record
+
+    async def set_allocated_bytes(
+        self, record: ClientRecord, value: int
+    ) -> ClientRecord:
+        record.allocated_bytes = max(0, int(value))
         await self.session.commit()
         await self.session.refresh(record)
         return record

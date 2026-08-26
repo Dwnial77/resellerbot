@@ -87,6 +87,9 @@ SERVICE_LIST_HEADER = "سرویس‌های شما ({start}–{end} از {total})
 SEARCH_SERVICE_PROMPT = "بخشی از نام/ایمیل سرویس مورد نظر را ارسال کنید:"
 SERVICE_SEARCH_HEADER = "نتایج جستجو برای «{query}» ({start}–{end} از {total}):"
 SEARCH_NO_RESULTS = "هیچ سرویسی با «{query}» یافت نشد."
+SERVICE_LIST_EXPIRED_COUNT = "❌ منقضی‌شده: {count}"
+SERVICE_LIST_SOON_COUNT = "⚠️ رو به اتمام: {count}"
+SERVICE_LIST_PICK = "یکی را انتخاب کنید:"
 
 PANEL_LIST_HEADER = "پنل‌های 3x-ui:"
 PANEL_LIST_EMPTY = "پنلی ثبت نشده است."
@@ -539,12 +542,20 @@ DELETE_CONFIRM_REFUND_UNKNOWN = (
 CREATE_SESSION_EXPIRED = (
     "اطلاعات ساخت ناقص یا منقضی شده است. از «ساخت سرویس» دوباره شروع کنید."
 )
-QR_CHOOSE = "کانفیگ VLESS را برای دریافت QR انتخاب کنید:"
-QR_NOT_AVAILABLE = "کانفیگ VLESS برای این سرویس یافت نشد."
+QR_NOT_AVAILABLE = "لینک ساب یا کانفیگ VLESS برای این سرویس یافت نشد."
 QR_SENT = "QR ارسال شد."
 QR_CAPTION = (
     "{remark_line}اسکن در v2rayNG / Hiddify — "
     "برای بروزرسانی خودکار از لینک ساب استفاده کنید."
+)
+SUB_QR_CAPTION = (
+    "QR لینک ساب — سرویس {email}\n"
+    "اسکن در v2rayNG / Hiddify؛ لیست کانفیگ‌ها خودکار بروز می‌شود."
+)
+CONFIG_QR_CAPTION = (
+    "QR کانفیگ — سرویس {email}\n"
+    "لینک ساب در دسترس نبود، پس QR کانفیگ مستقیم ارسال شد "
+    "(بروزرسانی خودکار ندارد)."
 )
 DELIVERY_GUIDE_WITH_SUB = (
     "━━━━━━━━━━━━━━━━\n"
@@ -559,15 +570,15 @@ DELIVERY_GUIDE_WITH_SUB = (
     "• Hiddify: + → Add subscription / From clipboard → Paste → Update\n"
     "• v2rayN (ویندوز): Subscription group → Add → Paste URL → Update subscription\n"
     "۳) یک بار Update بزنید تا کانفیگ‌ها لود شوند\n\n"
-    "📲 روش جایگزین — QR یا کانفیگ تکی\n"
-    "هر کانفیگ VLESS را جدا کپی کنید یا QR آن را اسکن کنید (دکمه «QR کانفیگ»). "
+    "📲 روش جایگزین — کانفیگ تکی\n"
+    "هر کانفیگ VLESS بالا را جدا کپی و در اپ اضافه کنید. "
     "این روش خودکار بروز نمی‌شود؛ با تغییر سرور باید لینک جدید بگیرید."
 )
 DELIVERY_GUIDE_NO_SUB = (
     "━━━━━━━━━━━━━━━━\n"
     "📌 راهنمای استفاده (برای مشتری)\n\n"
-    "لینک ساب در دسترس نیست. هر کانفیگ VLESS را جدا کپی کنید "
-    "یا QR آن را اسکن کنید (دکمه «QR کانفیگ»).\n\n"
+    "لینک ساب در دسترس نیست. هر کانفیگ VLESS بالا را جدا کپی "
+    "و در اپ اضافه کنید.\n\n"
     "با تغییر تنظیمات سرور، لینک جدید را از فروشنده بگیرید."
 )
 
@@ -594,6 +605,50 @@ SERVICE_DELETED_QUOTA_REFUNDED = (
 )
 SERVICE_ENABLED = "سرویس فعال شد."
 SERVICE_DISABLED = "سرویس غیرفعال شد."
+RENEW_CHOOSE_SOURCE = (
+    "تمدید سرویس `{email}`\n"
+    "سقف فعلی: {current_gb} GB\n"
+    "انقضای فعلی: {expiry_label}\n"
+    "باقی‌مانده سهمیه: {remaining_gb} GB\n\n"
+    "⚠️ با تمدید، مصرف سرویس صفر می‌شود و حجم و تاریخ از نو تعریف می‌شوند.\n\n"
+    "قالب را انتخاب کنید یا مقادیر را دستی وارد کنید:"
+)
+RENEW_VOLUME_PROMPT = (
+    "حجم جدید سرویس را به گیگابایت وارد کنید (حداقل {min_gb:g}):"
+)
+RENEW_EXPIRY_PROMPT = "تعداد روز اعتبار جدید را وارد کنید (0 = نامحدود):"
+RENEW_CONFIRM = (
+    "تأیید تمدید:\n"
+    "سرویس: `{email}`\n"
+    "{template_line}"
+    "حجم جدید: {volume_gb} GB (مصرف صفر می‌شود)\n"
+    "اعتبار جدید: {expiry_label}\n"
+    "سرویس به‌صورت خودکار فعال می‌شود.\n\n"
+    "باقی‌مانده سهمیه: {remaining_before_gb} → {remaining_after_gb} GB\n\n"
+    "ادامه می‌دهید؟"
+)
+RENEW_OK = (
+    "سرویس تمدید شد.\n"
+    "حجم جدید: {new_total_gb} GB\n"
+    "انقضا: {expiry_label}\n"
+    "باقی‌مانده سهمیه: {remaining_gb} GB"
+)
+RENEW_RESET_WARN = (
+    "\n\n⚠️ حجم و تاریخ اعمال شد ولی صفر کردن مصرف در پنل انجام نشد. "
+    "با ادمین تماس بگیرید."
+)
+RENAME_PROMPT = (
+    "نام جدید سرویس را وارد کنید (فقط بخش انتهایی).\n"
+    "نام فعلی: `{email}`\n"
+    "پیشوند `{prefix}` ثابت می‌ماند."
+)
+RENAME_OK = "نام سرویس تغییر کرد.\nنام جدید: `{email}`"
+SUB_REGEN_CONFIRM = (
+    "ساخت لینک ساب جدید برای `{email}`؟\n\n"
+    "⚠️ لینک ساب فعلی بلافاصله از کار می‌افتد و مشتری باید لینک جدید را "
+    "در اپ خود جایگزین کند. کانفیگ‌ها و مصرف تغییری نمی‌کنند."
+)
+SUB_REGEN_OK = "لینک ساب جدید ساخته شد."
 EXPIRY_CHOOSE_MODE = (
     "سرویس: `{email}`\n"
     "انقضای فعلی: {expiry_label}\n\n"

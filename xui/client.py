@@ -103,6 +103,11 @@ def _build_client_update_payload(
     return body
 
 
+def generate_sub_id() -> str:
+    """Random subscription id (same shape the panel gets at create time)."""
+    return uuid.uuid4().hex[:16]
+
+
 def build_subscription_url(public_base: str, sub_id: str) -> str:
     base = public_base.rstrip("/")
     return f"{base}/{sub_id.strip()}"
@@ -311,7 +316,7 @@ class XuiClient:
         if expiry_days > 0:
             expiry_ms = int((time.time() + expiry_days * 86400) * 1000)
 
-        sub_id = uuid.uuid4().hex[:16]
+        sub_id = generate_sub_id()
         group_name = group.strip()
         if group_name:
             await self.ensure_client_group(group_name)
@@ -398,15 +403,30 @@ class XuiClient:
         *,
         limit_ip: int | None = None,
         comment: str | None = None,
+        total_bytes: int | None = None,
+        expiry_ms: int | None = None,
+        enable: bool | None = None,
+        new_email: str | None = None,
+        sub_id: str | None = None,
     ) -> dict[str, Any]:
-        if limit_ip is None and comment is None:
-            raise XuiError("هیچ فیلدی برای به‌روزرسانی مشخص نشده.")
-        client = await self._get_client_dict_for_update(email)
         overrides: dict[str, Any] = {}
         if limit_ip is not None:
             overrides["limitIp"] = limit_ip
         if comment is not None:
             overrides["comment"] = comment
+        if total_bytes is not None:
+            overrides["totalGB"] = total_bytes
+        if expiry_ms is not None:
+            overrides["expiryTime"] = expiry_ms
+        if enable is not None:
+            overrides["enable"] = enable
+        if new_email is not None:
+            overrides["email"] = new_email
+        if sub_id is not None:
+            overrides["subId"] = sub_id
+        if not overrides:
+            raise XuiError("هیچ فیلدی برای به‌روزرسانی مشخص نشده.")
+        client = await self._get_client_dict_for_update(email)
         payload = _build_client_update_payload(client, **overrides)
         return await self._request(
             "POST",

@@ -2,6 +2,7 @@ import pytest
 
 from bot.utils.qr_vless import (
     InvalidVlessQrError,
+    generate_qr_png,
     generate_vless_qr_png,
     is_vless_config_url,
 )
@@ -22,3 +23,14 @@ def test_generate_vless_qr_png() -> None:
 def test_reject_subscription_url() -> None:
     with pytest.raises(InvalidVlessQrError):
         generate_vless_qr_png("https://example.com/sub/id")
+
+
+def test_generate_qr_png_accepts_subscription_url() -> None:
+    png = generate_qr_png("https://sub.example.com/save/abc123")
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    assert len(png) > 500
+
+
+def test_generate_qr_png_rejects_empty() -> None:
+    with pytest.raises(InvalidVlessQrError):
+        generate_qr_png("   ")

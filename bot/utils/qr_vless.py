@@ -19,10 +19,11 @@ def is_vless_config_url(link: str) -> bool:
     return text.startswith(_VLESS_PREFIXES)
 
 
-def generate_vless_qr_png(link: str) -> bytes:
-    text = (link or "").strip()
-    if not is_vless_config_url(text):
-        raise InvalidVlessQrError("فقط لینک کانفیگ VLESS/VMess برای QR مجاز است.")
+def generate_qr_png(data: str) -> bytes:
+    """QR image for any payload (subscription URLs included)."""
+    text = (data or "").strip()
+    if not text:
+        raise InvalidVlessQrError("محتوایی برای ساخت QR وجود ندارد.")
     qr = qrcode.QRCode(
         version=None,
         error_correction=ERROR_CORRECT_H,
@@ -35,3 +36,11 @@ def generate_vless_qr_png(link: str) -> bytes:
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def generate_vless_qr_png(link: str) -> bytes:
+    """QR image restricted to VLESS/VMess config URLs (guest sales flow)."""
+    text = (link or "").strip()
+    if not is_vless_config_url(text):
+        raise InvalidVlessQrError("فقط لینک کانفیگ VLESS/VMess برای QR مجاز است.")
+    return generate_qr_png(text)

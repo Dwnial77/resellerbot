@@ -51,6 +51,32 @@ def progress_bar(used: int, total: int, width: int = 10) -> tuple[str, int]:
     return bar, percent
 
 
+EXPIRY_OK = "ok"
+EXPIRY_SOON = "soon"
+EXPIRY_EXPIRED = "expired"
+
+EXPIRY_SOON_DAYS = 3
+
+
+def expiry_status(expiry_ms: int) -> str:
+    """Classify an expiry timestamp: expired / expiring soon / fine.
+
+    `expiry_ms <= 0` means unlimited, which counts as fine.
+    """
+    if expiry_ms <= 0:
+        return EXPIRY_OK
+    try:
+        dt = datetime.fromtimestamp(expiry_ms / 1000, tz=timezone.utc).astimezone()
+    except (OSError, OverflowError, ValueError):
+        return EXPIRY_OK
+    now = datetime.now(tz=dt.tzinfo)
+    if dt <= now:
+        return EXPIRY_EXPIRED
+    if (dt - now).total_seconds() < EXPIRY_SOON_DAYS * 86400:
+        return EXPIRY_SOON
+    return EXPIRY_OK
+
+
 def format_expiry(expiry_ms: int) -> str:
     if expiry_ms <= 0:
         return "نامحدود"

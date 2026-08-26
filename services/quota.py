@@ -157,6 +157,34 @@ class QuotaService:
             )
         return allocated
 
+    async def validate_renew(
+        self, reseller: Reseller, panel_id: int, volume_gb: float
+    ) -> int:
+        """Same rules as create, minus max_clients (the client already exists)."""
+        if not reseller.is_active:
+            raise QuotaExceeded("حساب ریسلر غیرفعال است.")
+
+        assignment = await self._get_assignment(reseller, panel_id)
+        if not assignment.is_active:
+            raise QuotaExceeded("تمدید سرویس روی این پنل ممنوع است.")
+
+        try:
+            validate_client_volume_gb(volume_gb)
+        except ValueError as e:
+            raise QuotaExceeded(str(e)) from e
+
+        allocated = gb_to_bytes(volume_gb)
+        if allocated <= 0:
+            raise QuotaExceeded("حجم باید بزرگ‌تر از صفر باشد.")
+
+        st = await self.global_status(reseller)
+        if allocated > st.remaining_bytes:
+            raise QuotaExceeded(
+                f"حجم درخواستی ({bytes_to_gb(allocated)} GB) بیشتر از باقی‌مانده "
+                f"({st.remaining_gb} GB) است."
+            )
+        return allocated
+
     async def validate_add_traffic(
         self, reseller: Reseller, panel_id: int, volume_gb: float
     ) -> int:

@@ -46,6 +46,22 @@ async def resolve_service(
     return ServiceContext(reseller=reseller, record=record, xui=xui)
 
 
+async def resolve_service_by_id(
+    session: AsyncSession,
+    registry: PanelRegistry,
+    user_id: int,
+    record_id: int,
+) -> ServiceContext:
+    reseller = await ResellerRepository(session).get(user_id)
+    if not reseller:
+        raise ServiceNotFoundError()
+    record = await ClientRepository(session).get_for_reseller_id(user_id, record_id)
+    if not record:
+        raise ServiceNotFoundError()
+    xui = xui_for_record(registry, record)
+    return ServiceContext(reseller=reseller, record=record, xui=xui)
+
+
 async def list_accessible_clients(
     session: AsyncSession,
     registry: PanelRegistry,
@@ -90,4 +106,15 @@ async def open_service_context(
 ) -> AsyncIterator[tuple[ServiceContext, AsyncSession]]:
     async with get_session_factory()() as session:
         ctx = await resolve_service(session, registry, user_id, email)
+        yield ctx, session
+
+
+@asynccontextmanager
+async def open_service_context_by_id(
+    registry: PanelRegistry,
+    user_id: int,
+    record_id: int,
+) -> AsyncIterator[tuple[ServiceContext, AsyncSession]]:
+    async with get_session_factory()() as session:
+        ctx = await resolve_service_by_id(session, registry, user_id, record_id)
         yield ctx, session

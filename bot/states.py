@@ -24,9 +24,17 @@ class ReduceTrafficStates(StatesGroup):
     confirm = State()
 
 
+class RenewServiceStates(StatesGroup):
+    pick_source = State()
+    volume = State()
+    expiry = State()
+    confirm = State()
+
+
 class EditServiceStates(StatesGroup):
     limit_ip = State()
     comment = State()
+    rename = State()
 
 
 class AddTemplateStates(StatesGroup):
