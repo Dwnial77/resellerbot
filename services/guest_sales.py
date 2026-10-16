@@ -20,6 +20,10 @@ async def ensure_system_reseller(
 ) -> Reseller:
     repo = ResellerRepository(session)
     existing = await repo.get(SYSTEM_RESELLER_TG_ID)
+    if existing is not None and existing.panel_id != panel_id:
+        # upsert() keeps panel_id for existing rows; follow the guest-sales panel
+        # so the assignment for the new panel is created below.
+        existing.panel_id = panel_id
     row = await repo.upsert(
         SYSTEM_RESELLER_TG_ID,
         existing.quota_bytes if existing else 0,
@@ -49,20 +53,24 @@ async def deliver_guest_order(
         session, guest_config.panel_id, inbound_ids
     )
     reseller_repo = ResellerRepository(session)
-    await reseller_repo.add_quota_bytes(
-        SYSTEM_RESELLER_TG_ID, gb_to_bytes(plan.volume_gb)
-    )
+    plan_bytes = gb_to_bytes(plan.volume_gb)
+    await reseller_repo.add_quota_bytes(SYSTEM_RESELLER_TG_ID, plan_bytes)
     reseller = await reseller_repo.get(SYSTEM_RESELLER_TG_ID) or reseller
 
-    xui = await xui_for_reseller_panel(
-        panel_registry, session, reseller, guest_config.panel_id
-    )
-    svc = ResellerService(session, xui)
-    return await svc.create_service(
-        reseller,
-        volume_gb=plan.volume_gb,
-        expiry_days=plan.expiry_days,
-        client_suffix=f"guest{order.telegram_id}_{order.id}",
-        panel_id=guest_config.panel_id,
-        inbound_ids=inbound_ids,
-    )
+    try:
+        xui = await xui_for_reseller_panel(
+            panel_registry, session, reseller, guest_config.panel_id
+        )
+        svc = ResellerService(session, xui)
+        return await svc.create_service(
+            reseller,
+            volume_gb=plan.volume_gb,
+            expiry_days=plan.expiry_days,
+            client_suffix=f"guest{order.telegram_id}_{order.id}",
+            panel_id=guest_config.panel_id,
+            inbound_ids=inbound_ids,
+        )
+    except Exception:
+        # Nothing was delivered: take back the quota granted for this order.
+        await reseller_repo.add_quota_bytes(SYSTEM_RESELLER_TG_ID, -plan_bytes)
+        raise

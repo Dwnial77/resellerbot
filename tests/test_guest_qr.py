@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from bot.handlers.guest import guest_send_vless_qr
 from bot.keyboards.common import guest_vless_qr_kb
-from db.models import Base, ClientRecord, Panel
+from db.models import Base, ClientRecord, GuestOrder, Panel
 from services.guest_sales import ensure_system_reseller
 from xui.client import ClientDelivery, VlessConfig
 
@@ -30,8 +30,10 @@ async def _make_session_factory(tmp_path):
     return engine, async_sessionmaker(engine, expire_on_commit=False)
 
 
-def test_guest_send_vless_qr_sends_photo_for_requested_index(tmp_path) -> None:
-    async def _run() -> None:
+def _run_qr(tmp_path, requester_id: int):
+    """Seed one delivered guest order (owner 555) and press its QR button."""
+
+    async def _run():
         engine, factory = await _make_session_factory(tmp_path)
         async with factory() as session:
             session.add(
@@ -48,15 +50,24 @@ def test_guest_send_vless_qr_sends_photo_for_requested_index(tmp_path) -> None:
             )
             await session.commit()
             await ensure_system_reseller(session, 1, [1])
+            record = ClientRecord(
+                reseller_tg_id=0,
+                panel_id=1,
+                email="guest1_5",
+                sub_id="sub-abc",
+                inbound_ids="[1]",
+                allocated_bytes=1000,
+                expiry_time=0,
+            )
+            session.add(record)
+            await session.commit()
             session.add(
-                ClientRecord(
-                    reseller_tg_id=0,
-                    panel_id=1,
-                    email="guest1_5",
-                    sub_id="sub-abc",
-                    inbound_ids="[1]",
-                    allocated_bytes=1000,
-                    expiry_time=0,
+                GuestOrder(
+                    telegram_id=555,
+                    plan_id=1,
+                    status="approved",
+                    receipt_kind="text",
+                    client_record_id=record.id,
                 )
             )
             await session.commit()
@@ -78,6 +89,7 @@ def test_guest_send_vless_qr_sends_photo_for_requested_index(tmp_path) -> None:
             try:
                 callback = MagicMock()
                 callback.data = "gqr:guest1_5:1"
+                callback.from_user.id = requester_id
                 callback.message = AsyncMock()
                 callback.answer = AsyncMock()
 
@@ -85,11 +97,21 @@ def test_guest_send_vless_qr_sends_photo_for_requested_index(tmp_path) -> None:
             finally:
                 guest_module.get_session_factory = original_factory
 
-            callback.message.answer_photo.assert_awaited_once()
-            _, kwargs = callback.message.answer_photo.await_args
-            assert "cfg1" in kwargs["caption"]
-            callback.answer.assert_awaited_once()
-
         await engine.dispose()
+        return callback
 
-    asyncio.run(_run())
+    return asyncio.run(_run())
+
+
+def test_guest_send_vless_qr_sends_photo_for_requested_index(tmp_path) -> None:
+    callback = _run_qr(tmp_path, requester_id=555)
+    callback.message.answer_photo.assert_awaited_once()
+    _, kwargs = callback.message.answer_photo.await_args
+    assert "cfg1" in kwargs["caption"]
+    callback.answer.assert_awaited_once()
+
+
+def test_guest_send_vless_qr_refuses_other_users(tmp_path) -> None:
+    callback = _run_qr(tmp_path, requester_id=777)
+    callback.message.answer_photo.assert_not_called()
+    callback.answer.assert_awaited_once()

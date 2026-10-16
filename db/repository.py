@@ -1233,6 +1233,46 @@ class GuestOrderRepository:
         )
         return list(result.all())
 
+    async def _transition(self, order_id: int, from_status: str, **values) -> bool:
+        """Atomically move an order out of from_status; False if it already moved."""
+        result = await self.session.execute(
+            update(GuestOrder)
+            .where(GuestOrder.id == order_id, GuestOrder.status == from_status)
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        await self.session.commit()
+        return result.rowcount == 1
+
+    async def user_owns_service(self, telegram_id: int, email: str) -> bool:
+        """True if email is the service delivered for one of this guest's orders."""
+        found = await self.session.scalar(
+            select(GuestOrder.id)
+            .join(ClientRecord, ClientRecord.id == GuestOrder.client_record_id)
+            .where(GuestOrder.telegram_id == telegram_id, ClientRecord.email == email)
+            .limit(1)
+        )
+        return found is not None
+
+    async def claim_pending(self, order_id: int) -> bool:
+        """Reserve a pending order for delivery (guards double-click / two admins)."""
+        return await self._transition(order_id, "pending", status="processing")
+
+    async def release_claim(self, order_id: int) -> bool:
+        """Put a claimed order back to pending after a failed delivery."""
+        return await self._transition(order_id, "processing", status="pending")
+
+    async def reject_if_pending(
+        self, order_id: int, reason: str | None = None
+    ) -> bool:
+        return await self._transition(
+            order_id,
+            "pending",
+            status="rejected",
+            reject_reason=reason,
+            decided_at=datetime.now(timezone.utc),
+        )
+
     async def mark_approved(
         self, order_id: int, client_record_id: int
     ) -> GuestOrder | None:

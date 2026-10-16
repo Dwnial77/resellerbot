@@ -66,6 +66,7 @@ async def buy_account(message: Message) -> None:
 
 _ORDER_STATUS_LABELS = {
     "pending": "در انتظار بررسی",
+    "processing": "در حال تحویل",
     "approved": "✅ تحویل شده",
     "rejected": "❌ رد شده",
 }
@@ -159,7 +160,12 @@ async def _notify_admins_of_order(message: Message, order_id: int, plan: Plan) -
             logger.warning("Could not notify admin %s of guest order: %s", admin_id, e)
 
 
-@router.message(GuestPurchaseStates.receipt)
+# Menu buttons pressed while a receipt is expected are not receipts; they fall
+# through to their own handlers (support is registered below this one).
+_GUEST_MENU_TEXTS = {btn.BUY_ACCOUNT, btn.MY_ORDERS, btn.SUPPORT}
+
+
+@router.message(GuestPurchaseStates.receipt, ~F.text.in_(_GUEST_MENU_TEXTS))
 async def guest_receipt_received(
     message: Message, state: FSMContext, rate_limit_check
 ) -> None:
@@ -229,6 +235,14 @@ async def guest_send_vless_qr(
         return
 
     async with get_session_factory()() as session:
+        user_id = callback.from_user.id if callback.from_user else None
+        is_admin = user_id in get_settings().admin_telegram_ids
+        if user_id is None or not (
+            is_admin
+            or await GuestOrderRepository(session).user_owns_service(user_id, email)
+        ):
+            await callback.answer(t.SERVICE_NOT_FOUND, show_alert=True)
+            return
         reseller = await ResellerRepository(session).get(SYSTEM_RESELLER_TG_ID)
         if reseller is None:
             await callback.answer(t.SERVICE_NOT_FOUND, show_alert=True)
