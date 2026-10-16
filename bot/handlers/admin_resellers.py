@@ -5,6 +5,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from bot.utils.numbers import parse_number
 from bot.handlers.admin import _is_admin
 from bot.keyboards import labels as btn
 from bot.keyboards.common import (
@@ -506,7 +507,7 @@ async def wizard_quota_quick(
         await callback.answer()
         return
     try:
-        quota = float(callback.data.split(":", 2)[2])
+        quota = parse_number(callback.data.split(":", 2)[2])
     except (ValueError, IndexError):
         await callback.answer(t.INVALID_INPUT, show_alert=True)
         return
@@ -525,7 +526,7 @@ async def wizard_quota_text(
     if not _is_admin(message.from_user.id if message.from_user else None):
         return
     try:
-        quota = float((message.text or "").replace(",", "."))
+        quota = parse_number(message.text or "")
         if quota <= 0:
             raise ValueError
     except ValueError:
@@ -712,7 +713,7 @@ async def edit_quota_quick(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         return
     parts = callback.data.split(":")
-    quota_gb = float(parts[2])
+    quota_gb = parse_number(parts[2])
     tg_id = int(parts[3])
     async with get_session_factory()() as session:
         try:
@@ -753,7 +754,7 @@ async def edit_add_quota_quick(callback: CallbackQuery, state: FSMContext) -> No
         await callback.answer()
         return
     parts = callback.data.split(":")
-    add_gb = float(parts[2])
+    add_gb = parse_number(parts[2])
     tg_id = int(parts[3])
     async with get_session_factory()() as session:
         try:
@@ -797,7 +798,7 @@ async def edit_subtract_quota_quick(callback: CallbackQuery, state: FSMContext) 
         await callback.answer()
         return
     parts = callback.data.split(":")
-    subtract_gb = float(parts[2])
+    subtract_gb = parse_number(parts[2])
     tg_id = int(parts[3])
     async with get_session_factory()() as session:
         try:
@@ -1108,17 +1109,17 @@ async def edit_value_text(message: Message, state: FSMContext) -> None:
     async with get_session_factory()() as session:
         try:
             if kind == "quota":
-                quota_gb = float(text_in.replace(",", "."))
+                quota_gb = parse_number(text_in)
                 if quota_gb <= 0:
                     raise ValueError
                 result = await apply_quota(session, tg_id, quota_gb)
             elif kind == "add_quota":
-                add_gb = float(text_in.replace(",", "."))
+                add_gb = parse_number(text_in)
                 if add_gb <= 0:
                     raise ValueError
                 result = await apply_add_quota(session, tg_id, add_gb)
             elif kind == "subtract_quota":
-                subtract_gb = float(text_in.replace(",", "."))
+                subtract_gb = parse_number(text_in)
                 if subtract_gb <= 0:
                     raise ValueError
                 result = await apply_subtract_quota(session, tg_id, subtract_gb)

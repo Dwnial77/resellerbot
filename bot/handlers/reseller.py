@@ -8,6 +8,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
+from bot.utils.numbers import parse_days, parse_number
 from bot.config import get_settings
 from bot.keyboards import labels as btn
 from bot.keyboards.common import (
@@ -380,7 +381,7 @@ async def create_from_template(
 @router.message(CreateServiceStates.volume)
 async def process_volume(message: Message, state: FSMContext) -> None:
     try:
-        volume = float((message.text or "").replace(",", "."))
+        volume = parse_number(message.text or "")
     except ValueError:
         await message.answer(t.INVALID_INPUT)
         return
@@ -402,7 +403,7 @@ async def process_volume(message: Message, state: FSMContext) -> None:
 @router.message(CreateServiceStates.expiry)
 async def process_expiry(message: Message, state: FSMContext) -> None:
     try:
-        days = int((message.text or "").strip())
+        days = parse_days(message.text or "")
         if days < 0:
             raise ValueError
     except ValueError:
@@ -1223,7 +1224,7 @@ async def renew_manual_start(callback: CallbackQuery, state: FSMContext) -> None
 @router.message(RenewServiceStates.volume)
 async def renew_process_volume(message: Message, state: FSMContext) -> None:
     try:
-        volume = float((message.text or "").replace(",", "."))
+        volume = parse_number(message.text or "")
     except ValueError:
         await message.answer(t.INVALID_INPUT)
         return
@@ -1247,7 +1248,7 @@ async def renew_process_expiry(
     if not message.from_user:
         return
     try:
-        days = int((message.text or "").strip())
+        days = parse_days(message.text or "")
         if days < 0:
             raise ValueError
     except ValueError:
@@ -1586,7 +1587,7 @@ async def add_traffic_quick_volume(
         await callback.answer()
         return
     try:
-        volume_gb = float((callback.data or "").split(":", 1)[1])
+        volume_gb = parse_number((callback.data or "").split(":", 1)[1])
         if volume_gb <= 0:
             raise ValueError
     except (ValueError, IndexError):
@@ -1635,7 +1636,7 @@ async def add_traffic_custom_volume(
         await message.answer(t.INVALID_INPUT)
         return
     try:
-        volume_gb = float((message.text or "").replace(",", "."))
+        volume_gb = parse_number(message.text or "")
         if volume_gb <= 0:
             raise ValueError
     except ValueError:
@@ -1856,7 +1857,7 @@ async def reduce_traffic_quick_volume(
         await callback.answer()
         return
     try:
-        volume_gb = float((callback.data or "").split(":", 1)[1])
+        volume_gb = parse_number((callback.data or "").split(":", 1)[1])
         if volume_gb <= 0:
             raise ValueError
     except (ValueError, IndexError):
@@ -1905,7 +1906,7 @@ async def reduce_traffic_custom_volume(
         await message.answer(t.INVALID_INPUT)
         return
     try:
-        volume_gb = float((message.text or "").replace(",", "."))
+        volume_gb = parse_number(message.text or "")
         if volume_gb <= 0:
             raise ValueError
     except ValueError:
@@ -2011,7 +2012,7 @@ async def expiry_process_add_days(
         await message.answer(t.INVALID_INPUT)
         return
     try:
-        days = int((message.text or "").strip())
+        days = parse_days(message.text or "")
         if days < 1:
             raise ValueError
     except ValueError:

@@ -5,6 +5,7 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
+from bot.utils.numbers import parse_number
 from bot.config import get_settings
 from bot.keyboards.common import admin_main_kb
 from bot.keyboards import labels as btn
@@ -63,7 +64,7 @@ def _parse_add_reseller(text: str) -> AddResellerParsed:
         try:
             panel_id = int(parts[1])
             if 1 <= panel_id <= _MAX_PANEL_ID_HEURISTIC:
-                quota_gb = float(parts[2].replace(",", "."))
+                quota_gb = parse_number(parts[2])
                 inbound_ids = [int(x) for x in parts[3:]]
                 if inbound_ids:
                     return AddResellerParsed(
@@ -74,7 +75,7 @@ def _parse_add_reseller(text: str) -> AddResellerParsed:
 
     # Legacy: id quota inbounds -> panel 1
     try:
-        quota_gb = float(parts[1].replace(",", "."))
+        quota_gb = parse_number(parts[1])
         inbound_ids = [int(x) for x in parts[2:]]
         if inbound_ids:
             return AddResellerParsed(tg_id, None, 1, quota_gb, inbound_ids)
@@ -87,7 +88,7 @@ def _parse_add_reseller(text: str) -> AddResellerParsed:
             display_name = normalize_display_name(parts[1])
             panel_id = int(parts[2])
             if 1 <= panel_id <= _MAX_PANEL_ID_HEURISTIC:
-                quota_gb = float(parts[3].replace(",", "."))
+                quota_gb = parse_number(parts[3])
                 inbound_ids = [int(x) for x in parts[4:]]
                 if inbound_ids:
                     return AddResellerParsed(
@@ -98,7 +99,7 @@ def _parse_add_reseller(text: str) -> AddResellerParsed:
 
     # Legacy named: id name quota inbounds -> panel 1
     display_name = normalize_display_name(parts[1])
-    quota_gb = float(parts[2].replace(",", "."))
+    quota_gb = parse_number(parts[2])
     inbound_ids = [int(x) for x in parts[3:]]
     if not inbound_ids:
         raise ValueError("no inbounds")
@@ -172,7 +173,7 @@ async def set_quota(message: Message) -> None:
         return
     try:
         tg_id = int(parts[1])
-        quota_gb = float(parts[2])
+        quota_gb = parse_number(parts[2])
     except ValueError:
         await message.answer(t.INVALID_INPUT)
         return
@@ -199,7 +200,7 @@ async def add_quota_cmd(message: Message) -> None:
         return
     try:
         tg_id = int(parts[1])
-        add_gb = float(parts[2].replace(",", "."))
+        add_gb = parse_number(parts[2])
     except ValueError:
         await message.answer(t.INVALID_INPUT)
         return
@@ -226,7 +227,7 @@ async def subtract_quota_cmd(message: Message) -> None:
         return
     try:
         tg_id = int(parts[1])
-        subtract_gb = float(parts[2].replace(",", "."))
+        subtract_gb = parse_number(parts[2])
     except ValueError:
         await message.answer(t.INVALID_INPUT)
         return

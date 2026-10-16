@@ -5,6 +5,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from bot.utils.numbers import parse_days, parse_number
 from bot.handlers.admin import _is_admin
 from bot.keyboards import labels as btn
 from bot.keyboards.common import (
@@ -212,7 +213,7 @@ async def wizard_volume_quick(
         await callback.answer()
         return
     try:
-        volume = float(callback.data.split(":", 2)[2])  # type: ignore[union-attr]
+        volume = parse_number(callback.data.split(":", 2)[2])  # type: ignore[union-attr]
     except (ValueError, IndexError):
         await callback.answer(t.INVALID_INPUT, show_alert=True)
         return
@@ -230,7 +231,7 @@ async def wizard_volume_text(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id if message.from_user else None):
         return
     try:
-        volume = float((message.text or "").replace(",", "."))
+        volume = parse_number(message.text or "")
         if volume <= 0:
             raise ValueError
     except ValueError:
@@ -269,7 +270,7 @@ async def wizard_expiry_text(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id if message.from_user else None):
         return
     try:
-        days = int((message.text or "").strip())
+        days = parse_days(message.text or "")
         if days < 0:
             raise ValueError
     except ValueError:
