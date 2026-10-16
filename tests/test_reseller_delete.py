@@ -29,7 +29,7 @@ def test_delete_success_zero_clients() -> None:
                 ok = await repo.delete(100)
 
         assert ok is True
-        session.execute.assert_awaited_once()
+        assert session.execute.await_count == 2  # usage alerts + panel assignments
         session.delete.assert_called_once_with(reseller)
         session.commit.assert_awaited_once()
 

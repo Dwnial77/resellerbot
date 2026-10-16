@@ -443,6 +443,9 @@ class ResellerRepository:
                 UsageAlertSent.reseller_tg_id == telegram_id
             )
         )
+        await self.session.execute(
+            delete(ResellerPanel).where(ResellerPanel.reseller_tg_id == telegram_id)
+        )
         await self.session.delete(row)
         await self.session.commit()
         return True

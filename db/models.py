@@ -68,7 +68,7 @@ class Reseller(Base):
     panel: Mapped["Panel"] = relationship(back_populates="resellers")
     clients: Mapped[list["ClientRecord"]] = relationship(back_populates="reseller")
     panel_assignments: Mapped[list["ResellerPanel"]] = relationship(
-        back_populates="reseller"
+        back_populates="reseller", cascade="all, delete-orphan"
     )
 
 

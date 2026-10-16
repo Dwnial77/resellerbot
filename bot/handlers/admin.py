@@ -2,7 +2,7 @@ import re
 from typing import NamedTuple
 
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.types import Message
 
 from bot.utils.numbers import parse_number
@@ -114,20 +114,32 @@ async def admin_help(message: Message) -> None:
     await message.answer(t.ADMIN_MENU, parse_mode="Markdown", reply_markup=admin_main_kb())
 
 
-@router.message(F.text.regexp(_ADD_RESELLER_PATTERN))
+def _from_admin(message: Message) -> bool:
+    return _is_admin(message.from_user.id if message.from_user else None)
+
+
+# Only outside any FSM flow and only for admins: otherwise this pattern swallows
+# card numbers, receipts, plan names... typed in other flows.
+@router.message(
+    StateFilter(None), F.text.regexp(_ADD_RESELLER_PATTERN), _from_admin
+)
 async def add_reseller_inline(
     message: Message, panel_registry: PanelRegistry
 ) -> None:
     """Format: telegram_id quota_gb inbound... OR telegram_id name quota_gb inbound..."""
-    if not _is_admin(message.from_user.id if message.from_user else None):
-        return
     try:
         parsed = _parse_add_reseller(message.text or "")  # type: ignore[arg-type]
     except (ValueError, InvalidDisplayNameError):
         await message.answer(t.INVALID_INPUT)
         return
+    if parsed.telegram_id <= 0:
+        await message.answer(t.INVALID_INPUT)
+        return
 
     async with get_session_factory()() as session:
+        if await ResellerRepository(session).get(parsed.telegram_id):
+            await message.answer(t.RESELLER_ALREADY_EXISTS)
+            return
         panel = await PanelRepository(session).get(parsed.panel_id)
         if not panel:
             await message.answer(t.PANEL_NOT_FOUND)

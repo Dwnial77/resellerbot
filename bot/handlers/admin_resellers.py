@@ -1106,40 +1106,44 @@ async def edit_value_text(message: Message, state: FSMContext) -> None:
     text_in = (message.text or "").strip()
 
     panel_id = data.get("panel_id")
+    # Parse first (bad input -> INVALID_INPUT), then apply (business errors such
+    # as "below allocated" are shown as-is).
+    try:
+        if kind in ("quota", "add_quota", "subtract_quota"):
+            value_gb = parse_number(text_in)
+            if value_gb <= 0:
+                raise ValueError
+        elif kind == "name":
+            display_name = normalize_display_name(text_in)
+        elif kind == "max_clients":
+            max_clients = int(text_in)
+            if max_clients < 1:
+                raise ValueError
+        else:
+            await message.answer(t.INVALID_INPUT)
+            return
+    except (ValueError, InvalidDisplayNameError):
+        await message.answer(t.INVALID_INPUT)
+        return
+
     async with get_session_factory()() as session:
         try:
             if kind == "quota":
-                quota_gb = parse_number(text_in)
-                if quota_gb <= 0:
-                    raise ValueError
-                result = await apply_quota(session, tg_id, quota_gb)
+                result = await apply_quota(session, tg_id, value_gb)
             elif kind == "add_quota":
-                add_gb = parse_number(text_in)
-                if add_gb <= 0:
-                    raise ValueError
-                result = await apply_add_quota(session, tg_id, add_gb)
+                result = await apply_add_quota(session, tg_id, value_gb)
             elif kind == "subtract_quota":
-                subtract_gb = parse_number(text_in)
-                if subtract_gb <= 0:
-                    raise ValueError
-                result = await apply_subtract_quota(session, tg_id, subtract_gb)
+                result = await apply_subtract_quota(session, tg_id, value_gb)
             elif kind == "name":
-                display_name = normalize_display_name(text_in)
                 result = await apply_display_name(session, tg_id, display_name)
-            elif kind == "max_clients":
-                max_clients = int(text_in)
-                if max_clients < 1:
-                    raise ValueError
-                result = await apply_max_clients(session, tg_id, max_clients)
             else:
-                await message.answer(t.INVALID_INPUT)
-                return
+                result = await apply_max_clients(session, tg_id, max_clients)
         except ResellerNotFoundError:
             await message.answer("ریسلر یافت نشد.")
             await state.clear()
             return
-        except (ValueError, InvalidDisplayNameError):
-            await message.answer(t.INVALID_INPUT)
+        except (ValueError, InvalidDisplayNameError) as e:
+            await message.answer(str(e) or t.INVALID_INPUT)
             return
 
     await state.clear()
