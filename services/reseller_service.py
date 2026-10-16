@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+import functools
 import logging
 import time
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 
+from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config import get_settings
@@ -49,6 +53,20 @@ from xui.client import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Serializes quota-changing operations per reseller (double taps, parallel
+# updates): validation and accounting must not interleave.
+_reseller_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+
+def _per_reseller_lock(fn):
+    @functools.wraps(fn)
+    async def wrapper(self: "ResellerService", reseller: Reseller, *args, **kwargs):
+        async with _reseller_locks[reseller.telegram_id]:
+            await self._refresh_reseller(reseller)
+            return await fn(self, reseller, *args, **kwargs)
+
+    return wrapper
 
 
 @dataclass
@@ -194,6 +212,14 @@ class ResellerService:
     async def get_reseller(self, telegram_id: int) -> Reseller | None:
         return await self.reseller_repo.get(telegram_id)
 
+    async def _refresh_reseller(self, reseller: Reseller) -> None:
+        """Reload quota counters that another request may have changed."""
+        try:
+            await self.reseller_repo.session.refresh(reseller)
+        except InvalidRequestError:
+            pass
+
+    @_per_reseller_lock
     async def create_service(
         self,
         reseller: Reseller,
@@ -273,6 +299,7 @@ class ResellerService:
         )
         return record, delivery
 
+    @_per_reseller_lock
     async def delete_service(
         self, reseller: Reseller, email: str
     ) -> DeleteServiceResult:
@@ -377,6 +404,7 @@ class ResellerService:
             raise XuiError("کلاینت در پنل یافت نشد.")
         return read_limit_ip(client), read_comment(client)
 
+    @_per_reseller_lock
     async def add_service_traffic(
         self, reseller: Reseller, email: str, volume_gb: float
     ) -> AddTrafficResult:
@@ -400,6 +428,7 @@ class ResellerService:
             remaining_bytes=st.remaining_bytes,
         )
 
+    @_per_reseller_lock
     async def remove_service_traffic(
         self, reseller: Reseller, email: str, volume_gb: float
     ) -> RemoveTrafficResult:
@@ -440,6 +469,7 @@ class ResellerService:
             disabled=plan.disable,
         )
 
+    @_per_reseller_lock
     async def renew_service(
         self,
         reseller: Reseller,

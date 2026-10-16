@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.utils.panel_url import normalize_http_url, normalize_sub_public_url
@@ -332,27 +332,42 @@ class ResellerRepository:
         """Sum of active service allocations (alias for active_bytes)."""
         return await self.active_bytes(telegram_id)
 
-    async def add_lifetime_allocated(self, telegram_id: int, delta: int) -> None:
+    async def _atomic_update(self, telegram_id: int, **values) -> Reseller | None:
+        """Apply an in-SQL update (x = x + d) so concurrent sessions can't lose writes."""
+        result = await self.session.execute(
+            update(Reseller)
+            .where(Reseller.telegram_id == telegram_id)
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        await self.session.commit()
+        if not result.rowcount:
+            return None
         row = await self.get(telegram_id)
+        if row is not None:
+            await self.session.refresh(row)
+            await self._sync_primary_panel_assignment(row)
+        return row
+
+    async def add_lifetime_allocated(self, telegram_id: int, delta: int) -> None:
+        row = await self._atomic_update(
+            telegram_id,
+            lifetime_allocated_bytes=Reseller.lifetime_allocated_bytes + delta,
+        )
         if not row:
             raise ValueError("ریسلر یافت نشد.")
-        row.lifetime_allocated_bytes += delta
-        await self.session.commit()
-        await self.session.refresh(row)
-        await self._sync_primary_panel_assignment(row)
 
     async def subtract_lifetime_allocated(
         self, telegram_id: int, delta: int
     ) -> None:
-        row = await self.get(telegram_id)
+        row = await self._atomic_update(
+            telegram_id,
+            lifetime_allocated_bytes=func.max(
+                0, Reseller.lifetime_allocated_bytes - delta
+            ),
+        )
         if not row:
             raise ValueError("ریسلر یافت نشد.")
-        row.lifetime_allocated_bytes = max(
-            0, int(row.lifetime_allocated_bytes or 0) - delta
-        )
-        await self.session.commit()
-        await self.session.refresh(row)
-        await self._sync_primary_panel_assignment(row)
 
     async def reset_lifetime_to_active(self, telegram_id: int) -> Reseller | None:
         row = await self.get(telegram_id)
@@ -365,14 +380,9 @@ class ResellerRepository:
         return row
 
     async def add_quota_bytes(self, telegram_id: int, delta: int) -> Reseller | None:
-        row = await self.get(telegram_id)
-        if not row:
-            return None
-        row.quota_bytes += delta
-        await self.session.commit()
-        await self.session.refresh(row)
-        await self._sync_primary_panel_assignment(row)
-        return row
+        return await self._atomic_update(
+            telegram_id, quota_bytes=Reseller.quota_bytes + delta
+        )
 
     async def subtract_quota_bytes(
         self, telegram_id: int, delta: int
