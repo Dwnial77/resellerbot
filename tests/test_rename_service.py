@@ -46,7 +46,9 @@ def _svc(
 
     client_repo = AsyncMock()
     client_repo.session = session
-    client_repo.get_for_reseller_email = AsyncMock(return_value=record)
+    client_repo.get_for_reseller_email = AsyncMock(
+        side_effect=lambda _tg, email: record if email == record.email else None
+    )
     client_repo.email_exists = AsyncMock(return_value=email_taken)
     client_repo.set_email = AsyncMock(return_value=record)
     client_repo.set_sub_id = AsyncMock(return_value=record)
@@ -159,5 +161,23 @@ def test_regenerate_sub_id_sets_new_value() -> None:
         )
         client_repo.set_sub_id.assert_awaited_once()
         assert client_repo.set_sub_id.await_args.args[1] == new_sub
+
+    asyncio.run(_run())
+
+
+def test_rename_service_rejects_name_used_on_another_panel() -> None:
+    async def _run() -> None:
+        svc, xui, client_repo = _svc()
+        other = _record()
+        other.id, other.panel_id, other.email = 2, 2, "ali-client-taken"
+        record = await client_repo.get_for_reseller_email(100, "ali-client-old")
+        client_repo.get_for_reseller_email = AsyncMock(
+            side_effect=lambda _tg, email: {
+                "ali-client-old": record, "ali-client-taken": other
+            }.get(email)
+        )
+        with pytest.raises(XuiError, match="قبلاً"):
+            await _rename(svc, _reseller(), "taken")
+        xui.update_client_fields.assert_not_called()
 
     asyncio.run(_run())

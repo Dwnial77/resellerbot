@@ -38,6 +38,7 @@ from services.reseller_labels import (
 )
 from xui.client import (
     ClientDelivery,
+    XuiApiError,
     XuiClient,
     XuiError,
     gb_to_bytes,
@@ -212,7 +213,13 @@ class ResellerService:
         )
 
         email = build_client_email(reseller, client_suffix)
-        if await self.client_repo.email_exists(email, panel_id=panel_id):
+        if await self.client_repo.email_exists(
+            email, panel_id=panel_id
+        ) or await self.client_repo.get_for_reseller_email(
+            reseller.telegram_id, email
+        ):
+            # Some lookups (rename, guest links) go by email alone, so a
+            # reseller's names must be unique across all of their panels.
             raise XuiError("این نام سرویس قبلاً استفاده شده.")
         existing_panel = await self.xui.get_client(email)
         if existing_panel is not None:
@@ -238,6 +245,7 @@ class ResellerService:
         if self.xui.auto_reseller_group:
             panel_group = panel_group_name(reseller)
 
+        panel_client_created = False
         try:
             _, sub_id = await self.xui.create_client(
                 email=email,
@@ -247,11 +255,16 @@ class ResellerService:
                 flow=flow,
                 group=panel_group,
             )
+            panel_client_created = True
             record = await self.client_repo.set_sub_id(record, sub_id)
             delivery = await self.xui.get_client_delivery(
                 email, sub_id, total_bytes=allocated
             )
-        except (XuiError, Exception) as e:
+        except Exception as e:
+            if panel_client_created or not isinstance(e, XuiApiError):
+                # The client may exist on the panel (created, or the add request
+                # timed out after being applied); don't leave it unbilled.
+                await self._delete_panel_client_quietly(email)
             await self.client_repo.delete(record)
             raise XuiError(str(e) or "خطای ناشناخته پنل") from e
 
@@ -277,8 +290,11 @@ class ResellerService:
             pass
         try:
             await self.xui.delete_client(email)
-        except XuiError:
-            pass
+        except XuiError as e:
+            # Only forget the service when the panel no longer has it; otherwise
+            # the client would keep working after its quota was refunded.
+            if await self._panel_client_exists(email):
+                raise XuiError(f"حذف سرویس در پنل انجام نشد: {e}") from e
         await UsageAlertRepository(self.client_repo.session).clear(
             reseller.telegram_id, CLIENT_TRAFFIC, client_email=email
         )
@@ -288,6 +304,18 @@ class ResellerService:
                 reseller.telegram_id, refund
             )
         return DeleteServiceResult(refunded_bytes=refund)
+
+    async def _panel_client_exists(self, email: str) -> bool:
+        try:
+            return await self.xui.get_client(email) is not None
+        except XuiError:
+            return True
+
+    async def _delete_panel_client_quietly(self, email: str) -> None:
+        try:
+            await self.xui.delete_client(email)
+        except XuiError as e:
+            logger.warning("Cleanup of panel client %s failed: %s", email, e)
 
     async def get_traffic(self, reseller: Reseller, email: str) -> dict:
         await self._get_owned_record(reseller, email)
@@ -482,7 +510,11 @@ class ResellerService:
             raise XuiError(str(e)) from e
         if new_email == email:
             raise XuiError("نام جدید با نام فعلی یکسان است.")
-        if await self.client_repo.email_exists(new_email, panel_id=record.panel_id):
+        if await self.client_repo.email_exists(
+            new_email, panel_id=record.panel_id
+        ) or await self.client_repo.get_for_reseller_email(
+            reseller.telegram_id, new_email
+        ):
             raise XuiError("این نام سرویس قبلاً استفاده شده.")
         if await self.xui.get_client(new_email) is not None:
             raise XuiError("این نام سرویس در پنل وجود دارد.")

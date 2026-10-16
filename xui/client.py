@@ -124,6 +124,10 @@ class XuiError(Exception):
     pass
 
 
+class XuiApiError(XuiError):
+    """The panel answered with success=false (a definitive answer, not retried)."""
+
+
 def _is_client_not_found(err: XuiError) -> bool:
     msg = str(err).lower()
     return "not found" in msg or "record not found" in msg
@@ -222,12 +226,38 @@ class XuiClient:
         *,
         json: dict | list | None = None,
         params: dict | None = None,
+        retry: bool = True,
+    ) -> Any:
+        """Call the panel API; every failure surfaces as XuiError.
+
+        retry=False is for non-idempotent calls (add client, bulkAdjust, delete):
+        if the panel applied the change but the response was lost, a retry would
+        apply it twice.
+        """
+        try:
+            return await self._request_inner(
+                method, path, json=json, params=params, retry=retry
+            )
+        except XuiError:
+            raise
+        except (httpx.HTTPError, ValueError) as e:
+            raise XuiError(f"خطای ارتباط با پنل: {e}") from e
+
+    async def _request_inner(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: dict | list | None,
+        params: dict | None,
+        retry: bool,
     ) -> Any:
         await self.ensure_authenticated()
         client = await self._get_client()
         last_err: Exception | None = None
+        attempts = self.max_retries if retry else 1
 
-        for attempt in range(1, self.max_retries + 1):
+        for attempt in range(1, attempts + 1):
             try:
                 r = await client.request(
                     method,
@@ -244,7 +274,7 @@ class XuiClient:
                 if r.status_code == 403:
                     raise XuiError("Forbidden — check API token or CSRF")
                 if not r.content:
-                    if attempt < self.max_retries:
+                    if attempt < attempts:
                         await asyncio.sleep(0.5 * attempt)
                         continue
                     raise XuiError("Panel returned empty response")
@@ -265,11 +295,13 @@ class XuiClient:
                         msg,
                         json,
                     )
-                    raise XuiError(msg)
+                    raise XuiApiError(msg)
                 return data
+            except XuiApiError:
+                raise
             except (httpx.HTTPError, XuiError) as e:
                 last_err = e
-                if attempt < self.max_retries:
+                if attempt < attempts:
                     await asyncio.sleep(0.5 * attempt)
                     continue
                 raise
@@ -391,6 +423,7 @@ class XuiClient:
             "POST",
             "/panel/api/clients/add",
             json=payload.model_dump(),
+            retry=False,
         )
         if group.strip():
             try:
@@ -405,7 +438,7 @@ class XuiClient:
 
     async def delete_client(self, email: str) -> dict[str, Any]:
         return await self._request(
-            "POST", f"/panel/api/clients/del/{quote(email, safe='')}"
+            "POST", f"/panel/api/clients/del/{quote(email, safe='')}", retry=False
         )
 
     async def get_traffic(self, email: str) -> dict[str, Any]:
@@ -498,6 +531,7 @@ class XuiClient:
             "POST",
             "/panel/api/clients/bulkAdjust",
             json={"emails": [email], "addDays": days, "addBytes": 0},
+            retry=False,
         )
 
     async def add_client_traffic_bytes(
@@ -509,6 +543,7 @@ class XuiClient:
             "POST",
             "/panel/api/clients/bulkAdjust",
             json={"emails": [email], "addDays": 0, "addBytes": add_bytes},
+            retry=False,
         )
 
     async def subtract_client_traffic_bytes(
@@ -528,6 +563,7 @@ class XuiClient:
             "POST",
             "/panel/api/clients/bulkAdjust",
             json={"emails": [email], "addDays": 0, "addBytes": -subtract_bytes},
+            retry=False,
         )
         obj = data.get("obj", data) if isinstance(data, dict) else data
         if isinstance(obj, dict):

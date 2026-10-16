@@ -451,8 +451,11 @@ async def _show_create_confirm(
         if not assignment:
             await message.answer(t.NO_PANEL_ACCESS)
             return False
-        if await ClientRepository(session).email_exists(
+        client_repo = ClientRepository(session)
+        if await client_repo.email_exists(
             email_preview, panel_id=int(panel_id)
+        ) or await client_repo.get_for_reseller_email(
+            reseller.telegram_id, email_preview
         ):
             await message.answer(t.EMAIL_TAKEN)
             await state.set_state(CreateServiceStates.client_name)
