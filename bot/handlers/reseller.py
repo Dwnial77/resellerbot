@@ -79,7 +79,7 @@ from db.repository import (
 from bot.utils.reseller_welcome import accessible_panel_ids, format_reseller_welcome
 from db.session import get_session_factory
 from services.client_volume import MIN_CLIENT_VOLUME_GB, validate_client_volume_gb
-from services.quota import QuotaExceeded, QuotaService
+from services.quota import QuotaExceeded, QuotaService, plan_remove_traffic
 from services.reseller_labels import (
     InvalidClientSuffixError,
     build_client_email,
@@ -1744,27 +1744,33 @@ async def _show_reduce_traffic_confirm(
             remaining_before = st.remaining_gb
             traffic = await ctx.xui.get_traffic(email)
             used_gb = bytes_to_gb(client_traffic_used_bytes(traffic))
-            if volume_gb > current_gb:
-                await message.answer(
-                    f"حجم درخواستی ({volume_gb} GB) بیشتر از سقف فعلی "
-                    f"({current_gb} GB) است."
+            used_bytes = client_traffic_used_bytes(traffic)
+            try:
+                removed = quota.validate_remove_traffic(
+                    ctx.reseller,
+                    volume_gb,
+                    current_allocated_bytes=ctx.record.allocated_bytes,
+                    used_bytes=used_bytes,
                 )
+            except QuotaExceeded as e:
+                await message.answer(str(e))
                 return False
-            new_gb = current_gb - volume_gb
-            if new_gb < used_gb:
-                await message.answer(
-                    f"سقف جدید ({new_gb} GB) کمتر از مصرف فعلی ({used_gb} GB) است."
-                )
-                return False
+            plan = plan_remove_traffic(
+                ctx.record.allocated_bytes, removed, used_bytes
+            )
             text = t.REDUCE_TRAFFIC_CONFIRM.format(
                 email=email,
-                remove_gb=volume_gb,
+                remove_gb=bytes_to_gb(plan.removed_bytes),
                 current_gb=current_gb,
-                new_gb=new_gb,
+                new_gb=bytes_to_gb(plan.new_total_bytes),
                 used_gb=used_gb,
                 remaining_before_gb=remaining_before,
-                remaining_after_gb=remaining_before + volume_gb,
+                remaining_after_gb=bytes_to_gb(
+                    st.remaining_bytes + plan.removed_bytes
+                ),
             )
+            if plan.disable:
+                text += t.REDUCE_TRAFFIC_DISABLE_NOTE
     except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
         await answer_resolve_message(message, e)
         return False
@@ -1944,8 +1950,11 @@ async def reduce_traffic_confirm(
     except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
         await answer_resolve_callback(callback, e)
         return
+    ok_text = (
+        t.REDUCE_TRAFFIC_OK_DISABLED if result.disabled else t.REDUCE_TRAFFIC_OK
+    )
     await callback.message.edit_text(  # type: ignore[union-attr]
-        t.REDUCE_TRAFFIC_OK.format(
+        ok_text.format(
             new_total_gb=bytes_to_gb(result.new_total_bytes),
             remaining_gb=bytes_to_gb(result.remaining_bytes),
         )

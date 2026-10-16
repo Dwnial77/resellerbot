@@ -359,6 +359,9 @@ class XuiClient:
         flow: str | None = None,
         group: str = "",
     ) -> tuple[dict[str, Any], str]:
+        if gb_to_bytes(volume_gb) <= 0:
+            # totalGB=0 means unlimited on 3x-ui; never create such a client.
+            raise XuiError("حجم سرویس باید بزرگ‌تر از صفر باشد.")
         # None = resolve it here; "" = caller resolved it and there is no flow.
         if flow is None:
             flow = await self.resolve_client_flow(inbound_ids)
@@ -466,7 +469,10 @@ class XuiClient:
         if comment is not None:
             overrides["comment"] = comment
         if total_bytes is not None:
-            overrides["totalGB"] = total_bytes
+            if total_bytes < 1:
+                # totalGB=0 means unlimited on 3x-ui.
+                raise XuiError("سقف ترافیک باید بزرگ‌تر از صفر باشد.")
+            overrides["totalGB"] = int(total_bytes)
         if expiry_ms is not None:
             overrides["expiryTime"] = expiry_ms
         if enable is not None:
@@ -510,6 +516,14 @@ class XuiClient:
     ) -> dict[str, Any]:
         if subtract_bytes < 1:
             raise XuiError("حجم کاهش باید بزرگ‌تر از صفر باشد.")
+        client = await self._get_client_dict_for_update(email)
+        try:
+            current_total = int(client.get("totalGB", client.get("total_gb", 0)) or 0)
+        except (TypeError, ValueError):
+            current_total = 0
+        if current_total - subtract_bytes < 1:
+            # Reaching 0 would make the client unlimited on 3x-ui.
+            raise XuiError("سقف جدید ترافیک باید بزرگ‌تر از صفر باشد.")
         data = await self._request(
             "POST",
             "/panel/api/clients/bulkAdjust",

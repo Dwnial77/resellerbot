@@ -24,7 +24,7 @@ from db.repository import (
     resolve_attach_inbound_ids_for_assignment,
 )
 from services.usage_alerts import CLIENT_TRAFFIC
-from services.quota import QuotaExceeded, QuotaService
+from services.quota import QuotaExceeded, QuotaService, plan_remove_traffic
 from bot.utils.edit_service import (
     InvalidEditInputError,
     validate_comment,
@@ -67,6 +67,7 @@ class RemoveTrafficResult:
     removed_bytes: int
     new_total_bytes: int
     remaining_bytes: int
+    disabled: bool = False
 
 
 @dataclass
@@ -387,16 +388,28 @@ class ResellerService:
             )
         except QuotaExceeded as e:
             raise XuiError(str(e)) from e
-        await self.xui.subtract_client_traffic_bytes(email, removed)
-        record = await self.client_repo.subtract_allocated_bytes(record, removed)
-        await self.reseller_repo.subtract_lifetime_allocated(
-            reseller.telegram_id, removed
-        )
+        plan = plan_remove_traffic(record.allocated_bytes, removed, used_bytes)
+        if plan.disable:
+            # Never let the panel cap reach 0 (unlimited): set an absolute
+            # non-zero cap and disable the client instead.
+            await self.xui.update_client_fields(
+                email, total_bytes=plan.new_total_bytes, enable=False
+            )
+        else:
+            await self.xui.subtract_client_traffic_bytes(email, plan.removed_bytes)
+        if plan.removed_bytes > 0:
+            record = await self.client_repo.subtract_allocated_bytes(
+                record, plan.removed_bytes
+            )
+            await self.reseller_repo.subtract_lifetime_allocated(
+                reseller.telegram_id, plan.removed_bytes
+            )
         st = await self.quota.global_status(reseller)
         return RemoveTrafficResult(
-            removed_bytes=removed,
+            removed_bytes=plan.removed_bytes,
             new_total_bytes=record.allocated_bytes,
             remaining_bytes=st.remaining_bytes,
+            disabled=plan.disable,
         )
 
     async def renew_service(

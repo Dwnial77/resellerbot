@@ -56,6 +56,37 @@ def format_max_clients_admin(st: QuotaStatus) -> str:
     return str(st.max_clients)
 
 
+# 3x-ui treats totalGB=0 as "unlimited", so a service cap must never reach 0.
+MIN_SERVICE_TOTAL_BYTES = 1024 * 1024
+
+
+@dataclass
+class RemoveTrafficPlan:
+    removed_bytes: int
+    new_total_bytes: int
+    disable: bool
+
+
+def plan_remove_traffic(
+    current_allocated_bytes: int, removed_bytes: int, used_bytes: int
+) -> RemoveTrafficPlan:
+    """Final cap after removing traffic; a cap with nothing left disables the service.
+
+    A cap of 0 would make the client unlimited on the panel, so it is clamped to
+    max(used, MIN_SERVICE_TOTAL_BYTES) and the service is disabled instead.
+    """
+    new_total = current_allocated_bytes - removed_bytes
+    if new_total <= 0:
+        new_total = max(int(used_bytes), MIN_SERVICE_TOTAL_BYTES)
+        new_total = min(new_total, current_allocated_bytes)
+    disable = new_total <= used_bytes or new_total <= MIN_SERVICE_TOTAL_BYTES
+    return RemoveTrafficPlan(
+        removed_bytes=max(0, current_allocated_bytes - new_total),
+        new_total_bytes=new_total,
+        disable=disable,
+    )
+
+
 class QuotaExceeded(Exception):
     def __init__(self, message: str) -> None:
         super().__init__(message)

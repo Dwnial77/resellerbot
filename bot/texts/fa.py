@@ -774,6 +774,14 @@ REDUCE_TRAFFIC_OK = (
     "سقف جدید سرویس: {new_total_gb} GB\n"
     "باقی‌مانده سهمیه: {remaining_gb} GB"
 )
+REDUCE_TRAFFIC_DISABLE_NOTE = (
+    "\n\n⚠️ با این کاهش حجمی برای سرویس باقی نمی‌ماند و سرویس *غیرفعال* می‌شود."
+)
+REDUCE_TRAFFIC_OK_DISABLED = (
+    "ترافیک کاهش یافت و سرویس غیرفعال شد.\n"
+    "سقف جدید سرویس: {new_total_gb} GB\n"
+    "باقی‌مانده سهمیه: {remaining_gb} GB"
+)
 EDIT_MENU = (
     "ویرایش سرویس `{email}`\n\n"
     "limitIp فعلی: {limit_ip_label}\n"
