@@ -77,6 +77,7 @@ PANEL_INACTIVE_FOR_RESELLER = (
     "پنل {panel_name} (#{panel_id}) غیرفعال است. ابتدا پنل را فعال کنید."
 )
 SERVICE_NOT_FOUND = "سرویس یافت نشد."
+ACTION_EXPIRED = "این دکمه منقضی شده؛ لطفاً دوباره از منوی سرویس شروع کنید."
 SERVICE_PANEL_UNAVAILABLE = (
     "پنل سرویس (#{panel_id}) در دسترس نیست (غیرفعال یا قطع). با ادمین تماس بگیرید."
 )

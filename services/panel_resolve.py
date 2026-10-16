@@ -16,6 +16,10 @@ class ServiceNotFoundError(LookupError):
     pass
 
 
+class ResellerInactiveError(ServiceNotFoundError):
+    """Reseller account is disabled; existing services must not be managed."""
+
+
 class ServicePanelUnavailableError(Exception):
     def __init__(self, panel_id: int) -> None:
         self.panel_id = panel_id

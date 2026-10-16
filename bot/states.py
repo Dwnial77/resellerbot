@@ -15,11 +15,13 @@ class ExtendExpiryStates(StatesGroup):
 
 
 class AddTrafficStates(StatesGroup):
+    choose = State()
     volume = State()
     confirm = State()
 
 
 class ReduceTrafficStates(StatesGroup):
+    choose = State()
     volume = State()
     confirm = State()
 

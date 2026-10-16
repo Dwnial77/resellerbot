@@ -1546,6 +1546,7 @@ async def add_traffic_menu(
         return
     await state.clear()
     await state.update_data(record_id=record_id)
+    await state.set_state(AddTrafficStates.choose)
     try:
         async with open_service_context_by_id(
             panel_registry, callback.from_user.id, record_id
@@ -1572,7 +1573,7 @@ async def add_traffic_menu(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("traf_vol:"))
+@router.callback_query(AddTrafficStates.choose, F.data.startswith("traf_vol:"))
 async def add_traffic_quick_volume(
     callback: CallbackQuery,
     state: FSMContext,
@@ -1605,7 +1606,7 @@ async def add_traffic_quick_volume(
         await callback.answer()
 
 
-@router.callback_query(F.data == "traf_custom")
+@router.callback_query(AddTrafficStates.choose, F.data == "traf_custom")
 async def add_traffic_custom_start(
     callback: CallbackQuery, state: FSMContext
 ) -> None:
@@ -1648,7 +1649,7 @@ async def add_traffic_custom_volume(
     )
 
 
-@router.callback_query(F.data == "traf_confirm")
+@router.callback_query(AddTrafficStates.confirm, F.data == "traf_confirm")
 async def add_traffic_confirm(
     callback: CallbackQuery,
     state: FSMContext,
@@ -1809,6 +1810,7 @@ async def reduce_traffic_menu(
         return
     await state.clear()
     await state.update_data(record_id=record_id)
+    await state.set_state(ReduceTrafficStates.choose)
     try:
         async with open_service_context_by_id(
             panel_registry, callback.from_user.id, record_id
@@ -1841,7 +1843,7 @@ async def reduce_traffic_menu(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("trafd_vol:"))
+@router.callback_query(ReduceTrafficStates.choose, F.data.startswith("trafd_vol:"))
 async def reduce_traffic_quick_volume(
     callback: CallbackQuery,
     state: FSMContext,
@@ -1874,7 +1876,7 @@ async def reduce_traffic_quick_volume(
         await callback.answer()
 
 
-@router.callback_query(F.data == "trafd_custom")
+@router.callback_query(ReduceTrafficStates.choose, F.data == "trafd_custom")
 async def reduce_traffic_custom_start(
     callback: CallbackQuery, state: FSMContext
 ) -> None:
@@ -1917,7 +1919,7 @@ async def reduce_traffic_custom_volume(
     )
 
 
-@router.callback_query(F.data == "trafd_confirm")
+@router.callback_query(ReduceTrafficStates.confirm, F.data == "trafd_confirm")
 async def reduce_traffic_confirm(
     callback: CallbackQuery,
     state: FSMContext,
@@ -2659,3 +2661,13 @@ async def service_edit_comment_input(
         await answer_resolve_message(message, e)
         return
     await message.answer(t.COMMENT_UPDATED)
+
+
+@router.callback_query(
+    F.data.in_({"traf_custom", "traf_confirm", "trafd_custom", "trafd_confirm"})
+    | F.data.startswith("traf_vol:")
+    | F.data.startswith("trafd_vol:")
+)
+async def stale_traffic_button(callback: CallbackQuery) -> None:
+    """Buttons from an old traffic dialog whose FSM state is gone or changed."""
+    await callback.answer(t.ACTION_EXPIRED, show_alert=True)
