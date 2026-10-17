@@ -1616,7 +1616,7 @@ async def add_traffic_custom_start(
     callback: CallbackQuery, state: FSMContext
 ) -> None:
     data = await state.get_data()
-    if not data.get("email"):
+    if data.get("record_id") is None:
         await callback.answer(t.INVALID_INPUT, show_alert=True)
         return
     await state.set_state(AddTrafficStates.volume)
@@ -1886,7 +1886,7 @@ async def reduce_traffic_custom_start(
     callback: CallbackQuery, state: FSMContext
 ) -> None:
     data = await state.get_data()
-    if not data.get("email"):
+    if data.get("record_id") is None:
         await callback.answer(t.INVALID_INPUT, show_alert=True)
         return
     await state.set_state(ReduceTrafficStates.volume)
