@@ -25,7 +25,7 @@ def test_reseller_hub_kb_add_button() -> None:
         allowed_inbound_ids="[1]",
         is_active=True,
     )
-    kb = reseller_admin_hub_kb([r], {1: "Main"})
+    kb = reseller_admin_hub_kb([r], {1: "Main"}, {})
     rows = kb.inline_keyboard
     assert rows[-1][0].callback_data == "rsl:add"
     assert rows[0][0].callback_data == "rsl:view:123"

@@ -2,7 +2,6 @@
 
 # Reply keyboard — admin
 LIST_RESELLERS = "📋 لیست ریسلرها"
-REPORTS = "📈 گزارش‌گیری"
 SERVICE_TEMPLATES = "📐 قالب‌های سرویس"
 SET_PANEL_RESELLER = "🔄 تغییر پنل ریسلر"
 PANELS = "🖥 پنل‌ها"
@@ -50,6 +49,10 @@ EDIT_PANEL_TOKEN = "🔑 توکن API"
 EDIT_PANEL_SUB = "🔗 آدرس ساب عمومی"
 CLEAR_SUB_URL = "بدون آدرس ساب عمومی"
 LIST_INBOUNDS = "🔌 لیست اینباندها"
+BULK_INBOUNDS = "🔀 اینباند گروهی"
+INBOUND_HEALTH = "🩺 بررسی سلامت اینباندها"
+BULK_ADD_ALL = "✅ افزودن به همه"
+BULK_REMOVE_ALL = "🗑 حذف از همه"
 SKIP_PUBLIC_SUB = "⏭ بدون آدرس ساب عمومی"
 
 # Reseller management

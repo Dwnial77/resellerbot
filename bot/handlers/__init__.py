@@ -8,7 +8,6 @@ from bot.handlers import (
     admin_guest_settings,
     admin_panels,
     admin_plans,
-    admin_reports,
     admin_reseller_panels,
     admin_resellers,
     admin_set_panel,
@@ -25,7 +24,6 @@ def setup_routers() -> Router:
     root.include_router(start.router)
     root.include_router(admin.router)
     root.include_router(admin_broadcast.router)
-    root.include_router(admin_reports.router)
     root.include_router(admin_resellers.router)
     root.include_router(admin_reseller_panels.router)
     root.include_router(admin_set_panel.router)

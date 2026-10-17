@@ -29,17 +29,22 @@ def format_progress_bar_line(percent: int | None, width: int = 10) -> str:
     return f"{format_progress_bar(percent, width)} {percent}%"
 
 
-def format_hub_summary_line(
-    name: str,
-    panel_name: str,
-    *,
-    is_active: bool,
-    client_count: int,
-    percent: int | None,
-) -> str:
-    status = "فعال" if is_active else "غیرفعال"
-    pct = f"{percent}%" if percent is not None else "—"
-    return f"• {name} — {panel_name} — {status} — {client_count} سرویس — {pct}"
+def format_hub_totals(total: int, active: int) -> list[str]:
+    """Aggregate header lines for the reseller hub, one number per line.
+
+    The previous per-reseller summary line packed name, panel, status, service
+    count and usage percent onto a single RTL line. Two numeric runs separated
+    by Persian text get visually reordered by Telegram's bidi renderer — the
+    same defect fixed for plan/template listings in commit 0d9632d. Per-reseller
+    detail now lives on the buttons, whose labels are pure ASCII and safe.
+    """
+    lines = [f"تعداد کل: {total}"]
+    if total:
+        lines.append(f"فعال: {active}")
+        inactive = total - active
+        if inactive:
+            lines.append(f"غیرفعال: {inactive}")
+    return lines
 
 
 def format_report_button_label(

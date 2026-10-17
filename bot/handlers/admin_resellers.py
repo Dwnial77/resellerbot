@@ -27,6 +27,8 @@ from bot.keyboards.common import (
 )
 from bot.states import AddResellerStates, EditResellerStates
 from bot.texts import fa as t
+from bot.utils.report_format import format_hub_totals
+from db.models import Reseller
 from db.repository import (
     PanelRepository,
     ResellerPanelRepository,
@@ -36,7 +38,7 @@ from db.repository import (
 )
 from db.session import get_session_factory
 from services.panel_registry import PanelNotFoundError, PanelRegistry
-from services.quota import QuotaService, format_max_clients_admin
+from services.quota import QuotaService, QuotaStatus, format_max_clients_admin
 from services.reseller_edit import (
     ResellerNotFoundError,
     apply_add_quota,
@@ -71,27 +73,36 @@ async def _panel_names_for_resellers(
     return names
 
 
+async def _load_reseller_stats(
+    session, resellers: list[Reseller]
+) -> dict[int, QuotaStatus]:
+    """Quota status per reseller. Database only — no panel calls."""
+    quota = QuotaService(
+        ResellerRepository(session), ResellerPanelRepository(session)
+    )
+    return {r.telegram_id: await quota.global_status(r) for r in resellers[:20]}
+
+
 async def _reseller_hub_content() -> tuple[str, object]:
     async with get_session_factory()() as session:
         rows = await ResellerRepository(session).list_all()
         panel_names = await _panel_names_for_resellers(session, rows)
+        stats = await _load_reseller_stats(session, rows)
 
     if not rows:
         return f"{t.RESELLER_LIST_EMPTY}\n\n{t.RESELLER_HUB_HINT}", reseller_admin_hub_kb(
-            [], {}
+            [], {}, {}
         )
 
     lines = [t.RESELLER_LIST_HEADER]
-    for r in rows[:20]:
-        name = r.display_name or str(r.telegram_id)
-        p_name = panel_names.get(r.panel_id, f"#{r.panel_id}")
-        status = "فعال" if r.is_active else "غیرفعال"
-        lines.append(f"• {name} — {p_name} — {status}")
+    lines.extend(
+        format_hub_totals(len(rows), sum(1 for r in rows if r.is_active))
+    )
     if len(rows) > 20:
         lines.append(f"… و {len(rows) - 20} ریسلر دیگر")
     lines.append("")
     lines.append(t.RESELLER_HUB_HINT)
-    return "\n".join(lines), reseller_admin_hub_kb(rows, panel_names)
+    return "\n".join(lines), reseller_admin_hub_kb(rows, panel_names, stats)
 
 
 async def _reseller_view_content(
@@ -117,21 +128,25 @@ async def _reseller_view_content(
             st = await quota_svc.status(reseller, a.panel_id)
             client_count += st.client_count
             mark = " *" if a.panel_id == reseller.panel_id else ""
+            # One "label: value" per line — two numeric runs on a single RTL
+            # line get reordered by Telegram's bidi renderer (commit 0d9632d).
             panel_lines.append(
-                f"• {pname}{mark}: {st.client_count} سرویس | "
-                f"تخصیص: {st.active_gb:.1f} GB"
+                t.RESELLER_VIEW_PANEL_LINE.format(
+                    panel_name=f"{pname}{mark}",
+                    client_count=st.client_count,
+                    active_gb=f"{st.active_gb:.1f}",
+                )
             )
         panels_summary = "\n".join(panel_lines) if panel_lines else "—"
-        panels_summary = (
-            f"سهمیه کل: {global_st.remaining_gb:.1f}/{global_st.quota_gb:.1f} GB\n"
-            f"{panels_summary}"
-        )
 
     text = t.RESELLER_VIEW_DETAIL.format(
         label=reseller_label(reseller),
         status="فعال" if reseller.is_active else "غیرفعال",
         panel_name=panel_name,
         panel_id=reseller.panel_id,
+        quota_gb=f"{global_st.quota_gb:.1f}",
+        lifetime_gb=f"{global_st.lifetime_gb:.1f}",
+        remaining_gb=f"{global_st.remaining_gb:.1f}",
         panels_summary=panels_summary,
         client_count=client_count,
     )
@@ -307,6 +322,24 @@ async def reseller_view(callback: CallbackQuery, state: FSMContext) -> None:
     text, markup = content
     await callback.message.edit_text(text, reply_markup=markup)
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rsl:refresh:"))
+async def reseller_refresh(callback: CallbackQuery) -> None:
+    if not _is_admin(callback.from_user.id if callback.from_user else None):
+        return
+    if not callback.data or not callback.message:
+        await callback.answer()
+        return
+    try:
+        tg_id = int(callback.data.split(":", 2)[2])
+    except (ValueError, IndexError):
+        await callback.answer(t.INVALID_INPUT, show_alert=True)
+        return
+    if not await _edit_reseller_view(callback.message, tg_id):  # type: ignore[arg-type]
+        await callback.answer("ریسلر یافت نشد.", show_alert=True)
+        return
+    await callback.answer(t.REPORT_UPDATED)
 
 
 @router.callback_query(F.data.startswith("rsl:toggle:"))

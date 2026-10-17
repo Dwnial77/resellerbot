@@ -5,7 +5,7 @@ from bot.utils.format_delivery import config_display_label
 from bot.utils.format_traffic import (
     EXPIRY_EXPIRED,
     EXPIRY_SOON,
-    expiry_status,
+    service_status,
 )
 from bot.utils.report_format import format_report_button_label, usage_percent_int
 from db.models import (
@@ -51,18 +51,17 @@ def admin_main_kb() -> ReplyKeyboardMarkup:
         keyboard=[
             [
                 KeyboardButton(text=L.LIST_RESELLERS),
-                KeyboardButton(text=L.REPORTS),
-            ],
-            [
                 KeyboardButton(text=L.SERVICE_TEMPLATES),
+            ],
+            [
                 KeyboardButton(text=L.PANELS),
-            ],
-            [
                 KeyboardButton(text=L.SET_PANEL_RESELLER),
-                KeyboardButton(text=L.BOT_UPDATE),
             ],
             [
+                KeyboardButton(text=L.BOT_UPDATE),
                 KeyboardButton(text=L.BACKUP),
+            ],
+            [
                 KeyboardButton(text=L.BROADCAST),
             ],
             [
@@ -236,6 +235,16 @@ def panel_view_kb(panel_id: int, *, is_active: bool) -> InlineKeyboardMarkup:
                     text=L.LIST_INBOUNDS,
                     callback_data=f"pnl:inbounds:{panel_id}",
                 ),
+                InlineKeyboardButton(
+                    text=L.BULK_INBOUNDS,
+                    callback_data=f"pnl:bulk:{panel_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.INBOUND_HEALTH,
+                    callback_data=f"pnl:health:{panel_id}",
+                ),
             ],
             [
                 InlineKeyboardButton(
@@ -244,6 +253,79 @@ def panel_view_kb(panel_id: int, *, is_active: bool) -> InlineKeyboardMarkup:
                 ),
             ],
             [InlineKeyboardButton(text=L.BACK, callback_data="pnl:hub")],
+        ]
+    )
+
+
+def panel_bulk_inbounds_kb(
+    panel_id: int,
+    inbounds: list[dict],
+    coverage: dict[int, tuple[int, int]],
+    orphan_ids: list[int] | None = None,
+) -> InlineKeyboardMarkup:
+    """One row per inbound, showing how many resellers already hold it.
+
+    Orphans — ids still referenced by reseller rows but no longer on the panel —
+    are listed too. They are the whole reason this screen exists: without them
+    an admin cannot clear a reference to a deleted inbound, which is what makes
+    service creation fail with the panel's "record not found".
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    for ib in inbounds[:25]:
+        try:
+            ib_id = int(ib.get("id", ib.get("inboundId", 0)))
+        except (TypeError, ValueError):
+            continue
+        if not ib_id:
+            continue
+        have, total = coverage.get(ib_id, (0, 0))
+        protocol = ib.get("protocol", "")
+        port = ib.get("port", "")
+        # Pure ASCII label: no Persian words mixed with the counters.
+        label = f"#{ib_id} {protocol}:{port} — {have}/{total}"
+        if len(label) > 40:
+            label = label[:37] + "..."
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=f"pnl:bulk:pick:{panel_id}:{ib_id}",
+                )
+            ]
+        )
+    for ib_id in (orphan_ids or [])[:10]:
+        have, total = coverage.get(ib_id, (0, 0))
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"⚠️ #{ib_id} — {have}/{total}",
+                    callback_data=f"pnl:bulk:pick:{panel_id}:{ib_id}",
+                )
+            ]
+        )
+    rows.append(
+        [InlineKeyboardButton(text=L.BACK, callback_data=f"pnl:view:{panel_id}")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def panel_bulk_confirm_kb(
+    panel_id: int, inbound_id: int, *, enable: bool
+) -> InlineKeyboardMarkup:
+    action = "on" if enable else "off"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.BULK_ADD_ALL if enable else L.BULK_REMOVE_ALL,
+                    callback_data=f"pnl:bulk:go:{panel_id}:{inbound_id}:{action}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.CANCEL, callback_data=f"pnl:bulk:{panel_id}"
+                ),
+            ],
         ]
     )
 
@@ -396,30 +478,16 @@ def set_panel_confirm_kb() -> InlineKeyboardMarkup:
 
 
 def reseller_admin_hub_kb(
-    resellers: list[Reseller], panel_names: dict[int, str]
-) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = []
-    for r in resellers[:20]:
-        name = r.display_name or str(r.telegram_id)
-        p_name = panel_names.get(r.panel_id, f"#{r.panel_id}")
-        label = L.reseller_hub_row_label(name, p_name, is_active=r.is_active)
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=label,
-                    callback_data=f"rsl:view:{r.telegram_id}",
-                )
-            ]
-        )
-    rows.append([InlineKeyboardButton(text=L.ADD_RESELLER, callback_data="rsl:add")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def reseller_report_hub_kb(
     resellers: list[Reseller],
     panel_names: dict[int, str],
     stats: dict[int, object],
 ) -> InlineKeyboardMarkup:
+    """Reseller list, carrying the usage figures the report hub used to show.
+
+    Labels stay pure ASCII (name is validated `[a-zA-Z0-9_-]+`), so packing the
+    service count and usage percent here is bidi-safe in a way the old Persian
+    summary lines were not.
+    """
     rows: list[list[InlineKeyboardButton]] = []
     for r in resellers[:20]:
         name = r.display_name or str(r.telegram_id)
@@ -440,28 +508,12 @@ def reseller_report_hub_kb(
             [
                 InlineKeyboardButton(
                     text=label,
-                    callback_data=f"rpt:view:{r.telegram_id}",
+                    callback_data=f"rsl:view:{r.telegram_id}",
                 )
             ]
         )
+    rows.append([InlineKeyboardButton(text=L.ADD_RESELLER, callback_data="rsl:add")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def reseller_report_view_kb(telegram_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=L.REFRESH,
-                    callback_data=f"rpt:refresh:{telegram_id}",
-                ),
-                InlineKeyboardButton(
-                    text=L.BACK,
-                    callback_data="rpt:back",
-                ),
-            ],
-        ]
-    )
 
 
 def reseller_view_kb(
@@ -469,6 +521,10 @@ def reseller_view_kb(
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [
+            InlineKeyboardButton(
+                text=L.REFRESH,
+                callback_data=f"rsl:refresh:{telegram_id}",
+            ),
             InlineKeyboardButton(
                 text=L.active_toggle_label(is_active=is_active),
                 callback_data=f"rsl:toggle:{telegram_id}",
@@ -1393,21 +1449,32 @@ def confirm_create_kb() -> InlineKeyboardMarkup:
 _EXPIRY_ICONS = {EXPIRY_EXPIRED: "❌ ", EXPIRY_SOON: "⚠️ "}
 
 
-def service_button_label(record: ClientRecord) -> str:
+def service_button_label(
+    record: ClientRecord, usage: dict[int, tuple[int, int]] | None = None
+) -> str:
     """Icon + email only.
+
+    The icon reflects whichever runs out first, time or volume — a service can
+    burn through its traffic weeks before its expiry date.
 
     Never put digits here: Telegram's bidi renderer reorders numeric runs on an
     RTL line, which is what garbled the plan listings before (commit 0d9632d).
     Counts belong in the multi-line message above the list.
     """
-    icon = _EXPIRY_ICONS.get(expiry_status(int(record.expiry_time or 0)), "")
+    used, total = (usage or {}).get(record.id, (None, 0))
+    status = service_status(int(record.expiry_time or 0), used, total)
+    icon = _EXPIRY_ICONS.get(status, "")
     email = record.email
     short = email if len(email) <= 28 else email[:25] + "..."
     return f"{icon}{short}"
 
 
 def service_list_kb(
-    records: list[ClientRecord], *, page: int = 0, query: str | None = None
+    records: list[ClientRecord],
+    *,
+    page: int = 0,
+    query: str | None = None,
+    usage: dict[int, tuple[int, int]] | None = None,
 ) -> InlineKeyboardMarkup:
     total = len(records)
     total_pages = max(1, (total + SERVICES_PAGE_SIZE - 1) // SERVICES_PAGE_SIZE)
@@ -1420,7 +1487,7 @@ def service_list_kb(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=service_button_label(record),
+                    text=service_button_label(record, usage),
                     callback_data=f"svc:{record.id}",
                 )
             ]

@@ -87,9 +87,73 @@ SERVICE_LIST_HEADER = "سرویس‌های شما ({start}–{end} از {total})
 SEARCH_SERVICE_PROMPT = "بخشی از نام/ایمیل سرویس مورد نظر را ارسال کنید:"
 SERVICE_SEARCH_HEADER = "نتایج جستجو برای «{query}» ({start}–{end} از {total}):"
 SEARCH_NO_RESULTS = "هیچ سرویسی با «{query}» یافت نشد."
-SERVICE_LIST_EXPIRED_COUNT = "❌ منقضی‌شده: {count}"
+SERVICE_LIST_EXPIRED_COUNT = "❌ تمام‌شده (حجم یا زمان): {count}"
 SERVICE_LIST_SOON_COUNT = "⚠️ رو به اتمام: {count}"
+SERVICE_NOTE_VOLUME_GONE = "\n❌ حجم این سرویس تمام شده است."
+SERVICE_NOTE_TIME_GONE = "\n❌ مدت این سرویس تمام شده است."
+SERVICE_NOTE_VOLUME_LOW = "\n⚠️ حجم این سرویس رو به اتمام است."
+SERVICE_NOTE_TIME_LOW = "\n⚠️ مدت این سرویس رو به اتمام است."
 SERVICE_LIST_PICK = "یکی را انتخاب کنید:"
+
+BULK_INBOUND_PICK = (
+    "اینباند گروهی — پنل {panel_name}\n"
+    "ریسلرهای این پنل: {total}\n\n"
+    "عدد کنار هر اینباند یعنی چند ریسلر الان آن را دارند.\n"
+    "یکی را انتخاب کنید:"
+)
+BULK_INBOUND_NO_RESELLERS = "هیچ ریسلری به این پنل تخصیص داده نشده."
+BULK_INBOUND_ORPHAN_NOTE = (
+    "\n\n⚠️ اینباندهای ناموجود روی پنل: {ids}\n"
+    "این‌ها با علامت ⚠️ در لیست پایین آمده‌اند و باعث خطای «record not found» "
+    "هنگام ساخت سرویس می‌شوند. فقط قابل حذف‌اند."
+)
+BULK_INBOUND_CONFIRM_ORPHAN = (
+    "حذف اینباند #{inbound_id} از همهٔ ریسلرهای پنل {panel_name}؟\n\n"
+    "این اینباند روی پنل وجود ندارد و ارجاع به آن باعث خطای "
+    "«record not found» هنگام ساخت سرویس می‌شود.\n\n"
+    "الان به آن ارجاع می‌دهند: {have}\n\n"
+    "⚠️ ریسلری که این تنها اینباندش باشد رد می‌شود و دست‌نخورده می‌ماند؛ "
+    "برای او اول یک اینباند سالم اضافه کنید."
+)
+BULK_INBOUND_CONFIRM_ADD = (
+    "افزودن اینباند #{inbound_id} به همهٔ ریسلرهای پنل {panel_name}؟\n\n"
+    "الان دارند: {have}\n"
+    "اضافه می‌شود به: {missing}\n\n"
+    "به هر دو لیست «مجاز» و «متصل» اضافه می‌شود."
+)
+BULK_INBOUND_CONFIRM_REMOVE = (
+    "حذف اینباند #{inbound_id} از همهٔ ریسلرهای پنل {panel_name}؟\n\n"
+    "الان دارند: {have}\n\n"
+    "⚠️ ریسلری که این تنها اینباندش باشد رد می‌شود و دست‌نخورده می‌ماند.\n"
+    "برای جایگزینی، اول اینباند جدید را به همه اضافه کنید."
+)
+BULK_INBOUND_DONE = (
+    "{title}\n"
+    "به‌روزرسانی شد: {changed}\n"
+    "رد شد: {skipped_count}"
+)
+BULK_INBOUND_SKIPPED_HEADER = "\nرد شده‌ها:"
+BULK_INBOUND_TITLE_ADD = "اینباند #{inbound_id} به ریسلرها اضافه شد."
+BULK_INBOUND_TITLE_REMOVE = "اینباند #{inbound_id} از ریسلرها حذف شد."
+
+INBOUND_HEALTH_HEADER = (
+    "بررسی سلامت اینباندها — پنل {panel_name}\n"
+    "اینباندهای زنده: {live}"
+)
+INBOUND_HEALTH_OK = "\n✅ همهٔ ریسلرها سالم‌اند."
+INBOUND_HEALTH_PROBLEM_HEADER = "\n⚠️ ریسلرهایی با اینباند ناموجود:"
+INBOUND_HEALTH_BLOCKED = "  ❌ هیچ اینباند سالمی ندارد — نمی‌تواند سرویس بسازد"
+INBOUND_HEALTH_MISSING_ALLOWED = "  مجاز، ناموجود: {ids}"
+INBOUND_HEALTH_MISSING_ATTACH = "  متصل، ناموجود: {ids}"
+INBOUND_HEALTH_HINT = (
+    "\nبرای اصلاح: «اینباند گروهی» → اینباند درست را به همه اضافه کنید، "
+    "بعد اینباند ناموجود را حذف کنید."
+)
+PANEL_UNREACHABLE = (
+    "پنل {panel_name} در دسترس نیست.\n"
+    "{reason}\n\n"
+    "آدرس پنل و اتصال شبکه سرور را بررسی کنید."
+)
 
 PANEL_LIST_HEADER = "پنل‌های 3x-ui:"
 PANEL_LIST_EMPTY = "پنلی ثبت نشده است."
@@ -196,31 +260,26 @@ RESELLER_ENABLED = "ریسلر {label} فعال شد."
 
 RESELLER_LIST_HEADER = "ریسلرها:"
 RESELLER_LIST_EMPTY = "ریسلری ثبت نشده است."
-REPORT_HUB_HEADER = "گزارش‌گیری — ریسلر را انتخاب کنید:"
-REPORT_HUB_EMPTY = "ریسلری برای گزارش وجود ندارد."
-REPORT_HUB_HINT = "روی هر ریسلر بزنید تا گزارش تعداد سرویس و تخصیص حجم نمایش داده شود."
-RESELLER_REPORT = (
-    "📈 گزارش ریسلر: {label}\n"
-    "وضعیت: {status}\n"
-    "پنل پیش‌فرض: {panel_name} (#{panel_id})\n"
-    "سهمیه کل: {quota_gb} GB | مصرف: {lifetime_gb} GB | باقی: {remaining_gb} GB\n"
-    "{panels_detail}\n"
-    "سرویس کل: {client_count}"
-)
-RESELLER_REPORT_PANEL_LINE = (
-    "• {panel_name}: {client_count} سرویس | "
-    "تخصیص فعال: {active_gb} GB"
-)
 REPORT_UPDATED = "گزارش بروزرسانی شد."
 RESELLER_HUB_HINT = (
-    "روی هر ریسلر بزنید برای مدیریت؛ «افزودن ریسلر» برای ویزارد ثبت."
+    "روی هر ریسلر بزنید برای مدیریت و گزارش؛ «افزودن ریسلر» برای ویزارد ثبت."
 )
 RESELLER_VIEW_DETAIL = (
     "ریسلر: {label}\n"
     "وضعیت: {status}\n"
     "پنل پیش‌فرض: {panel_name} (#{panel_id})\n"
-    "{panels_summary}\n"
-    "سرویس کل: {client_count}"
+    "\n"
+    "سهمیه کل: {quota_gb} GB\n"
+    "مصرف سهمیه: {lifetime_gb} GB\n"
+    "باقی‌مانده: {remaining_gb} GB\n"
+    "سرویس کل: {client_count}\n"
+    "\n"
+    "{panels_summary}"
+)
+RESELLER_VIEW_PANEL_LINE = (
+    "• {panel_name}\n"
+    "  سرویس: {client_count}\n"
+    "  تخصیص فعال: {active_gb} GB"
 )
 RESELLER_PANELS_HEADER = "پنل‌های {label}:"
 RESELLER_PANEL_VIEW = (
@@ -524,8 +583,10 @@ DELETE_CONFIRM = (
     "آیا از حذف سرویس `{email}` مطمئن هستید؟\n"
     "این کار قابل بازگشت نیست.\n\n"
     "{refund_hint}\n\n"
-    "قانون: اگر مصرف واقعی ترافیک کمتر از {threshold_gb} GB باشد، "
-    "سهمیهٔ همان سرویس به حساب شما برمی‌گردد."
+    "قانون بازگشت سهمیه — هر سه شرط با هم:\n"
+    "• مصرف کمتر از {threshold_gb} GB\n"
+    "• سرویس منقضی نشده باشد\n"
+    "• حداکثر {max_age_hours} ساعت از ساختش گذشته باشد"
 )
 DELETE_CONFIRM_REFUND_YES = (
     "مصرف فعلی: {used}\n"
@@ -533,12 +594,19 @@ DELETE_CONFIRM_REFUND_YES = (
 )
 DELETE_CONFIRM_REFUND_NO = (
     "مصرف فعلی: {used}\n"
-    "مصرف از {threshold_gb} GB یا بیشتر است؛ سهمیه برنمی‌گردد."
+    "سهمیه برنمی‌گردد.\n"
+    "دلیل: {reason}"
 )
 DELETE_CONFIRM_REFUND_UNKNOWN = (
     "مصرف ترافیک از پنل خوانده نشد.\n"
-    "در صورت حذف، سهمیه فقط در صورت مصرف زیر آستانه برمی‌گردد."
+    "در صورت حذف، سهمیه برنمی‌گردد."
 )
+REFUND_BLOCK_REASONS = {
+    "used": "مصرف از {threshold_gb} GB بیشتر است.",
+    "expired": "سرویس منقضی شده و دورهٔ فروخته‌شده مصرف شده است.",
+    "too_old": "بیش از {max_age_hours} ساعت از ساخت این سرویس گذشته است.",
+    "unknown_age": "تاریخ ساخت این سرویس مشخص نیست.",
+}
 CREATE_SESSION_EXPIRED = (
     "اطلاعات ساخت ناقص یا منقضی شده است. از «ساخت سرویس» دوباره شروع کنید."
 )

@@ -3,11 +3,18 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from enum import Enum
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config import get_settings
-from bot.utils.format_traffic import client_traffic_used_bytes
+from bot.utils.format_traffic import (
+    EXPIRY_EXPIRED,
+    client_traffic_used_bytes,
+    expiry_status,
+    normalize_traffic_data,
+)
 from db.models import ClientRecord, Reseller
 from db.repository import (
     ClientRepository,
@@ -71,15 +78,99 @@ class RenewServiceResult:
     traffic_reset_failed: bool = False
 
 
-def is_quota_refund_eligible(
-    used_bytes: int, *, max_traffic_gb: float | None = None
-) -> bool:
+class RefundBlockReason(str, Enum):
+    """Why a delete did not return quota — surfaced in the confirm dialog."""
+
+    USED = "used"
+    EXPIRED = "expired"
+    TOO_OLD = "too_old"
+    UNKNOWN_AGE = "unknown_age"
+
+
+def _service_age_hours(created_at: datetime | None) -> float | None:
+    """Hours since creation, or None when it cannot be determined.
+
+    `ClientRecord.created_at` comes back from SQLite naive and in UTC
+    (`func.now()` is CURRENT_TIMESTAMP), so it must be compared against UTC.
+    Using local time would shrink the window by the server's offset.
+    """
+    if created_at is None:
+        return None
+    if created_at.tzinfo is None:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+    else:
+        now = datetime.now(timezone.utc)
+    return (now - created_at).total_seconds() / 3600
+
+
+def refund_block_reason(
+    used_bytes: int,
+    *,
+    expiry_ms: int = 0,
+    created_at: datetime | None = None,
+    max_traffic_gb: float | None = None,
+    max_age_hours: float | None = None,
+) -> RefundBlockReason | None:
+    """None when the quota should be returned, otherwise why it should not.
+
+    A refund undoes a recent mistake; it is not a way to hand back the quota of
+    a service whose sold period has already been used up. Checking traffic alone
+    let an expired service be deleted for a full refund.
+    """
+    settings = get_settings()
     threshold_gb = (
         max_traffic_gb
         if max_traffic_gb is not None
-        else get_settings().quota_refund_max_traffic_gb
+        else settings.quota_refund_max_traffic_gb
     )
-    return used_bytes < gb_to_bytes(threshold_gb)
+    if used_bytes >= gb_to_bytes(threshold_gb):
+        return RefundBlockReason.USED
+    if expiry_status(expiry_ms) == EXPIRY_EXPIRED:
+        return RefundBlockReason.EXPIRED
+
+    window = (
+        max_age_hours
+        if max_age_hours is not None
+        else settings.quota_refund_max_age_hours
+    )
+    age = _service_age_hours(created_at)
+    if age is None:
+        # Unknown age must not grant a refund by default.
+        return RefundBlockReason.UNKNOWN_AGE
+    if age > window:
+        return RefundBlockReason.TOO_OLD
+    return None
+
+
+def panel_expiry_ms(traffic: object, record: ClientRecord) -> int:
+    """Expiry from the panel response, falling back to the stored value."""
+    row = normalize_traffic_data(traffic)
+    raw = row.get("expiryTime", row.get("expiry_time"))
+    try:
+        panel_ms = int(raw or 0)
+    except (TypeError, ValueError):
+        panel_ms = 0
+    return panel_ms if panel_ms > 0 else int(record.expiry_time or 0)
+
+
+def is_quota_refund_eligible(
+    used_bytes: int,
+    *,
+    expiry_ms: int = 0,
+    created_at: datetime | None = None,
+    max_traffic_gb: float | None = None,
+    max_age_hours: float | None = None,
+) -> bool:
+    return (
+        refund_block_reason(
+            used_bytes,
+            expiry_ms=expiry_ms,
+            created_at=created_at,
+            max_traffic_gb=max_traffic_gb,
+            max_age_hours=max_age_hours,
+        )
+        is None
+    )
 
 
 class ResellerService:
@@ -125,6 +216,10 @@ class ResellerService:
         existing_panel = await self.xui.get_client(email)
         if existing_panel is not None:
             raise XuiError("این نام سرویس در پنل وجود دارد.")
+        # Before touching the database: confirm the inbounds still exist on the
+        # panel. Costs nothing extra — the flow resolution needed that list too.
+        flow = await self.xui.prepare_client_inbounds(ids)
+
         expiry_ms = 0
         if expiry_days > 0:
             expiry_ms = int((time.time() + expiry_days * 86400) * 1000)
@@ -148,6 +243,7 @@ class ResellerService:
                 volume_gb=volume_gb,
                 inbound_ids=ids,
                 expiry_days=expiry_days,
+                flow=flow,
                 group=panel_group,
             )
             record = await self.client_repo.set_sub_id(record, sub_id)
@@ -170,7 +266,11 @@ class ResellerService:
         refund = 0
         try:
             traffic = await self.xui.get_traffic(email)
-            if is_quota_refund_eligible(client_traffic_used_bytes(traffic)):
+            if is_quota_refund_eligible(
+                client_traffic_used_bytes(traffic),
+                expiry_ms=panel_expiry_ms(traffic, record),
+                created_at=record.created_at,
+            ):
                 refund = record.allocated_bytes
         except XuiError:
             pass

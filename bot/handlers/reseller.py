@@ -1,5 +1,8 @@
+import logging
 import secrets
 from dataclasses import dataclass
+
+import httpx
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -56,6 +59,8 @@ from bot.utils.format_traffic import (
     EXPIRY_SOON,
     client_traffic_used_bytes,
     expiry_status,
+    service_status,
+    traffic_status,
     progress_bar,
     format_bytes,
     format_expiry,
@@ -81,11 +86,12 @@ from services.reseller_labels import (
     email_prefix,
     normalize_client_suffix,
 )
-from services.panel_registry import PanelRegistry
+from services.panel_registry import PanelNotFoundError, PanelRegistry
 from services.reseller_service import (
     DeleteServiceResult,
     ResellerService,
-    is_quota_refund_eligible,
+    panel_expiry_ms,
+    refund_block_reason,
 )
 from bot.utils.service_resolve import (
     answer_resolve_callback,
@@ -102,6 +108,7 @@ from services.panel_resolve import (
 )
 from xui.client import XuiError, bytes_to_gb, gb_to_bytes
 
+logger = logging.getLogger(__name__)
 router = Router()
 
 
@@ -624,16 +631,55 @@ MAX_SEARCH_QUERY_LEN = 40
 _STATUS_SORT_RANK = {EXPIRY_EXPIRED: 0, EXPIRY_SOON: 1}
 
 
+async def _service_usage(
+    registry: PanelRegistry, records: list[ClientRecord]
+) -> dict[int, tuple[int, int]]:
+    """`record.id -> (used, total)`, one panel request per panel — not per service.
+
+    Fetching usage per client is what made the alert loop overwhelm the panel,
+    so this groups by panel first. A panel that fails is simply left out: those
+    services fall back to time-only status instead of breaking the whole list.
+    """
+    by_panel: dict[int, list[ClientRecord]] = {}
+    for record in records:
+        by_panel.setdefault(record.panel_id, []).append(record)
+
+    usage: dict[int, tuple[int, int]] = {}
+    for panel_id, panel_records in by_panel.items():
+        try:
+            panel_usage = await registry.get_client(panel_id).client_usage_map()
+        except (PanelNotFoundError, XuiError, httpx.HTTPError) as e:
+            logger.warning("Usage unavailable for panel #%s: %r", panel_id, e)
+            continue
+        if panel_usage is None:
+            continue
+        for record in panel_records:
+            row = panel_usage.get(record.email)
+            if row is None:
+                continue
+            used, panel_total = row
+            # total == 0 on the panel means unlimited there, so fall back to
+            # the volume we allocated; only both being zero is truly unlimited.
+            total = panel_total if panel_total > 0 else int(record.allocated_bytes or 0)
+            usage[record.id] = (used, total)
+    return usage
+
+
+def _record_status(record: ClientRecord, usage: dict[int, tuple[int, int]]) -> str:
+    used, total = usage.get(record.id, (None, 0))
+    return service_status(int(record.expiry_time or 0), used, total)
+
+
 async def _accessible_service_records(
     session, registry: PanelRegistry, reseller_tg_id: int
-) -> list[ClientRecord]:
+) -> tuple[list[ClientRecord], dict[int, tuple[int, int]]]:
     clients = await list_accessible_clients(session, registry, reseller_tg_id)
-    return sorted(
+    usage = await _service_usage(registry, clients)
+    ordered = sorted(
         clients,
-        key=lambda c: _STATUS_SORT_RANK.get(
-            expiry_status(int(c.expiry_time or 0)), 2
-        ),
+        key=lambda c: _STATUS_SORT_RANK.get(_record_status(c, usage), 2),
     )
+    return ordered, usage
 
 
 def _normalize_search_query(raw: str) -> str:
@@ -650,7 +696,10 @@ def _filter_records(
 
 
 def _format_service_list_text(
-    records: list[ClientRecord], page: int, query: str | None = None
+    records: list[ClientRecord],
+    page: int,
+    query: str | None = None,
+    usage: dict[int, tuple[int, int]] | None = None,
 ) -> str:
     total = len(records)
     start = page * SERVICES_PAGE_SIZE + 1 if total else 0
@@ -664,7 +713,7 @@ def _format_service_list_text(
 
     # Counts go here, not on the buttons: this text is multi-line, so each
     # number sits on its own "label: value" line and bidi can't reorder them.
-    statuses = [expiry_status(int(r.expiry_time or 0)) for r in records]
+    statuses = [_record_status(r, usage or {}) for r in records]
     lines = [header]
     expired = statuses.count(EXPIRY_EXPIRED)
     soon = statuses.count(EXPIRY_SOON)
@@ -683,6 +732,7 @@ async def _show_service_list(
     *,
     query: str | None = None,
     edit: bool = False,
+    usage: dict[int, tuple[int, int]] | None = None,
 ) -> None:
     if query and not records:
         markup = service_list_kb([], page=0, query=query)
@@ -692,8 +742,8 @@ async def _show_service_list(
         else:
             await message.answer(text, reply_markup=markup)
         return
-    text = _format_service_list_text(records, page, query)
-    markup = service_list_kb(records, page=page, query=query)
+    text = _format_service_list_text(records, page, query, usage)
+    markup = service_list_kb(records, page=page, query=query, usage=usage)
     if edit:
         await message.edit_text(text, reply_markup=markup)
     else:
@@ -712,7 +762,7 @@ async def my_services(
         if not reseller or not reseller.is_active:
             await message.answer(t.NOT_RESELLER)
             return
-        records = await _accessible_service_records(
+        records, usage = await _accessible_service_records(
             session, panel_registry, message.from_user.id
         )
 
@@ -721,7 +771,9 @@ async def my_services(
         return
     data = await state.get_data()
     query = data.get("service_search_query")
-    await _show_service_list(message, _filter_records(records, query), page=0, query=query)
+    await _show_service_list(
+        message, _filter_records(records, query), page=0, query=query, usage=usage
+    )
 
 
 @router.callback_query(F.data == "svc:back")
@@ -732,7 +784,7 @@ async def services_back(
         await callback.answer()
         return
     async with get_session_factory()() as session:
-        records = await _accessible_service_records(
+        records, usage = await _accessible_service_records(
             session, panel_registry, callback.from_user.id
         )
     if not records:
@@ -741,7 +793,12 @@ async def services_back(
         data = await state.get_data()
         query = data.get("service_search_query")
         await _show_service_list(
-            callback.message, _filter_records(records, query), page=0, query=query, edit=True  # type: ignore[arg-type]
+            callback.message,  # type: ignore[arg-type]
+            _filter_records(records, query),
+            page=0,
+            query=query,
+            edit=True,
+            usage=usage,
         )
     await callback.answer()
 
@@ -759,7 +816,7 @@ async def services_page(
         await callback.answer(t.INVALID_INPUT, show_alert=True)
         return
     async with get_session_factory()() as session:
-        records = await _accessible_service_records(
+        records, usage = await _accessible_service_records(
             session, panel_registry, callback.from_user.id
         )
     if not records:
@@ -769,7 +826,12 @@ async def services_page(
     data = await state.get_data()
     query = data.get("service_search_query")
     await _show_service_list(
-        callback.message, _filter_records(records, query), page=page, query=query, edit=True  # type: ignore[arg-type]
+        callback.message,  # type: ignore[arg-type]
+        _filter_records(records, query),
+        page=page,
+        query=query,
+        edit=True,
+        usage=usage,
     )
     await callback.answer()
 
@@ -800,10 +862,12 @@ async def service_search_input(
     await state.update_data(service_search_query=query)
     await state.set_state(None)
     async with get_session_factory()() as session:
-        records = await _accessible_service_records(
+        records, usage = await _accessible_service_records(
             session, panel_registry, message.from_user.id
         )
-    await _show_service_list(message, _filter_records(records, query), page=0, query=query)
+    await _show_service_list(
+        message, _filter_records(records, query), page=0, query=query, usage=usage
+    )
 
 
 @router.callback_query(F.data == "svc:search:clear")
@@ -815,14 +879,19 @@ async def service_search_clear(
         return
     await state.update_data(service_search_query=None)
     async with get_session_factory()() as session:
-        records = await _accessible_service_records(
+        records, usage = await _accessible_service_records(
             session, panel_registry, callback.from_user.id
         )
     if not records:
         await callback.message.edit_text(t.NO_ACCESSIBLE_SERVICES)  # type: ignore[union-attr]
     else:
         await _show_service_list(
-            callback.message, records, page=0, query=None, edit=True  # type: ignore[arg-type]
+            callback.message,  # type: ignore[arg-type]
+            records,
+            page=0,
+            query=None,
+            edit=True,
+            usage=usage,
         )
     await callback.answer()
 
@@ -836,7 +905,7 @@ async def service_search_cancel(
         return
     await state.set_state(None)
     async with get_session_factory()() as session:
-        records = await _accessible_service_records(
+        records, usage = await _accessible_service_records(
             session, panel_registry, callback.from_user.id
         )
     data = await state.get_data()
@@ -845,7 +914,12 @@ async def service_search_cancel(
         await callback.message.edit_text(t.NO_ACCESSIBLE_SERVICES)  # type: ignore[union-attr]
     else:
         await _show_service_list(
-            callback.message, _filter_records(records, query), page=0, query=query, edit=True  # type: ignore[arg-type]
+            callback.message,  # type: ignore[arg-type]
+            _filter_records(records, query),
+            page=0,
+            query=query,
+            edit=True,
+            usage=usage,
         )
     await callback.answer()
 
@@ -899,7 +973,26 @@ def _service_detail_text(detail: ServiceDetail) -> str:
     else:
         lines.append(f"مصرف: {format_bytes(detail.used_bytes)} (سقف نامحدود)")
     lines.append(f"انقضا: {format_expiry(detail.expiry_ms)}")
+
+    # The list shows one icon for both causes, so name the cause here.
+    note = _service_status_note(detail)
+    if note:
+        lines.append(note)
     return "\n".join(lines)
+
+
+def _service_status_note(detail: ServiceDetail) -> str:
+    volume = traffic_status(detail.used_bytes, detail.total_bytes)
+    time_left = expiry_status(detail.expiry_ms)
+    if volume == EXPIRY_EXPIRED:
+        return t.SERVICE_NOTE_VOLUME_GONE
+    if time_left == EXPIRY_EXPIRED:
+        return t.SERVICE_NOTE_TIME_GONE
+    if volume == EXPIRY_SOON:
+        return t.SERVICE_NOTE_VOLUME_LOW
+    if time_left == EXPIRY_SOON:
+        return t.SERVICE_NOTE_TIME_LOW
+    return ""
 
 
 async def _load_service_detail(
@@ -2132,11 +2225,22 @@ async def service_delete_prompt(
             if traffic is not None:
                 used = client_traffic_used_bytes(traffic)
                 used_s = format_bytes(used)
-                if is_quota_refund_eligible(used, max_traffic_gb=threshold_gb):
+                # Same inputs the delete itself uses, so the prediction here
+                # cannot disagree with what actually happens.
+                reason = refund_block_reason(
+                    used,
+                    expiry_ms=panel_expiry_ms(traffic, ctx.record),
+                    created_at=ctx.record.created_at,
+                )
+                if reason is None:
                     refund_hint = t.DELETE_CONFIRM_REFUND_YES.format(used=used_s)
                 else:
                     refund_hint = t.DELETE_CONFIRM_REFUND_NO.format(
-                        used=used_s, threshold_gb=threshold_gb
+                        used=used_s,
+                        reason=t.REFUND_BLOCK_REASONS[reason.value].format(
+                            threshold_gb=f"{threshold_gb:g}",
+                            max_age_hours=f"{settings.quota_refund_max_age_hours:g}",
+                        ),
                     )
     except (ServiceNotFoundError, ServicePanelUnavailableError) as e:
         await answer_resolve_callback(callback, e)
@@ -2146,7 +2250,8 @@ async def service_delete_prompt(
         t.DELETE_CONFIRM.format(
             email=email,
             refund_hint=refund_hint,
-            threshold_gb=threshold_gb,
+            threshold_gb=f"{threshold_gb:g}",
+            max_age_hours=f"{settings.quota_refund_max_age_hours:g}",
         ),
         parse_mode="Markdown",
         reply_markup=delete_confirm_kb(record_id),

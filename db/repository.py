@@ -635,6 +635,14 @@ class ResellerPanelRepository:
         await self.session.commit()
         return True
 
+    async def list_for_panel(self, panel_id: int) -> list[ResellerPanel]:
+        result = await self.session.scalars(
+            select(ResellerPanel)
+            .where(ResellerPanel.panel_id == panel_id)
+            .order_by(ResellerPanel.reseller_tg_id)
+        )
+        return list(result.all())
+
     async def assignment_count_on_panel(self, panel_id: int) -> int:
         result = await self.session.scalar(
             select(func.count())

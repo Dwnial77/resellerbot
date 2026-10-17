@@ -103,6 +103,13 @@ def _build_client_update_payload(
     return body
 
 
+def _coerce_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def generate_sub_id() -> str:
     """Random subscription id (same shape the panel gets at create time)."""
     return uuid.uuid4().hex[:16]
@@ -248,7 +255,17 @@ class XuiClient:
                     data = {"success": r.is_success, "raw": r.text}
 
                 if isinstance(data, dict) and data.get("success") is False:
-                    raise XuiError(data.get("msg", "Panel API error"))
+                    msg = data.get("msg", "Panel API error")
+                    # The panel's own message carries no context ("record not
+                    # found" says nothing about which record), so pin the call.
+                    logger.warning(
+                        "Panel rejected %s %s: %s (payload=%s)",
+                        method,
+                        path,
+                        msg,
+                        json,
+                    )
+                    raise XuiError(msg)
                 return data
             except (httpx.HTTPError, XuiError) as e:
                 last_err = e
@@ -269,6 +286,39 @@ class XuiClient:
             flow or "(empty)",
         )
         return flow
+
+    async def prepare_client_inbounds(self, inbound_ids: list[int]) -> str:
+        """Check the inbounds exist on the panel, and resolve the client flow.
+
+        Both need the inbound list, so they share one request. Without the
+        existence check the panel just answers "record not found" on create,
+        which says nothing about which inbound is missing — the failure mode
+        that follows deleting an inbound in 3x-ui while reseller rows still
+        reference it.
+        """
+        if not inbound_ids:
+            return ""
+        inbounds = await self.list_inbounds()
+        live: set[int] = set()
+        for ib in inbounds:
+            try:
+                live.add(int(ib.get("id", ib.get("inboundId"))))
+            except (TypeError, ValueError):
+                continue
+        missing = sorted(set(inbound_ids) - live)
+        if missing:
+            logger.warning(
+                "Inbounds %s requested but panel only has %s",
+                missing,
+                sorted(live),
+            )
+            ids = "، ".join(str(i) for i in missing)
+            raise XuiError(
+                f"اینباند {ids} روی پنل وجود ندارد. با ادمین تماس بگیرید."
+            )
+        if not self.auto_vision_flow:
+            return ""
+        return resolve_flow_for_inbound_ids(inbounds, inbound_ids)
 
     async def ensure_client_group(self, name: str) -> None:
         group = name.strip()
@@ -306,10 +356,11 @@ class XuiClient:
         *,
         expiry_days: int = 0,
         limit_ip: int = 0,
-        flow: str = "",
+        flow: str | None = None,
         group: str = "",
     ) -> tuple[dict[str, Any], str]:
-        if flow == "":
+        # None = resolve it here; "" = caller resolved it and there is no flow.
+        if flow is None:
             flow = await self.resolve_client_flow(inbound_ids)
 
         expiry_ms = 0
@@ -570,6 +621,41 @@ class XuiClient:
             vless_configs=vless_configs,
             subscription_links=subscription_links,
         )
+
+    async def client_usage_map(self) -> dict[str, tuple[int, int]] | None:
+        """`email -> (used_bytes, total_bytes)` for every client, in one request.
+
+        The inbound list embeds a `clientStats` array per inbound, so usage for
+        a whole panel costs a single call. Fetching it per client is what made
+        the usage-alert loop overwhelm the panel.
+
+        Returns None when the panel reports no `clientStats` at all, which is
+        different from every client having zero usage: the caller must fall back
+        to time-only status rather than treat everyone as idle.
+        """
+        inbounds = await self.list_inbounds()
+        usage: dict[str, tuple[int, int]] = {}
+        seen_stats = False
+        for inbound in inbounds:
+            stats = inbound.get("clientStats")
+            if not isinstance(stats, list):
+                continue
+            seen_stats = True
+            for row in stats:
+                if not isinstance(row, dict):
+                    continue
+                email = str(row.get("email") or "").strip()
+                if not email:
+                    continue
+                up = _coerce_int(row.get("up"))
+                down = _coerce_int(row.get("down"))
+                # total == 0 on the panel means "unlimited", not "no quota";
+                # the caller substitutes the allocation we recorded.
+                usage[email] = (up + down, _coerce_int(row.get("total")))
+        if not seen_stats:
+            logger.warning("Panel returned no clientStats; usage unavailable")
+            return None
+        return usage
 
     async def list_inbounds(self) -> list[dict[str, Any]]:
         data = await self._request("GET", "/panel/api/inbounds/list")
