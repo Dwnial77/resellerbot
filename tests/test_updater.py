@@ -154,3 +154,35 @@ def test_read_version_from_zip_without_extract(tmp_path: Path) -> None:
     assert not staging.exists()
     assert inspect_release_zip(zip_path, current_version="1.0.0") == "2.0.0"
     assert not staging.exists()
+
+
+def _zip_bytes(version: str) -> bytes:
+    import io
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("bot/version.py", f'__version__ = "{version}"\n')
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize("payload", [b"not a zip", None])
+def test_rejected_update_zip_is_not_left_staged(tmp_path: Path, payload) -> None:
+    from services.updater import pending_zip_path, save_pending_update
+
+    data = payload if payload is not None else _zip_bytes(__version__)
+    with pytest.raises(UpdateError):
+        save_pending_update(
+            data, uploaded_by=1, filename="x.zip", max_bytes=10**6, root=tmp_path
+        )
+    assert not pending_zip_path(tmp_path).exists()
+
+
+def test_failed_apply_clears_pending(tmp_path: Path) -> None:
+    from services.updater import apply_pending_update, pending_zip_path
+
+    path = pending_zip_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(_zip_bytes("0.0.1"))  # downgrade -> blocked
+    result = apply_pending_update(tmp_path)
+    assert result is not None and result.success is False
+    assert not path.exists()

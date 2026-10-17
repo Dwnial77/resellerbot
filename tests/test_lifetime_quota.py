@@ -1,6 +1,7 @@
 """Tests for lifetime quota consumption (anti-abuse on service delete)."""
 
 import asyncio
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -196,11 +197,13 @@ def test_client_traffic_used_bytes_sums_up_down() -> None:
 
 
 def test_is_quota_refund_eligible_threshold() -> None:
+    # 3.2.0: refunds also require a known, recent creation time.
+    fresh = {"max_traffic_gb": 1.0, "created_at": datetime.now(timezone.utc)}
     one_gb = gb_to_bytes(1)
-    assert is_quota_refund_eligible(0, max_traffic_gb=1.0) is True
-    assert is_quota_refund_eligible(one_gb - 1, max_traffic_gb=1.0) is True
-    assert is_quota_refund_eligible(one_gb, max_traffic_gb=1.0) is False
-    assert is_quota_refund_eligible(one_gb + 1, max_traffic_gb=1.0) is False
+    assert is_quota_refund_eligible(0, **fresh) is True
+    assert is_quota_refund_eligible(one_gb - 1, **fresh) is True
+    assert is_quota_refund_eligible(one_gb, **fresh) is False
+    assert is_quota_refund_eligible(one_gb + 1, **fresh) is False
 
 
 def _client_record(*, allocated_gb: float = 50) -> ClientRecord:
@@ -212,6 +215,7 @@ def _client_record(*, allocated_gb: float = 50) -> ClientRecord:
         inbound_ids="[1]",
         allocated_bytes=gb_to_bytes(allocated_gb),
         expiry_time=0,
+        created_at=datetime.now(timezone.utc),
     )
 
 
@@ -292,6 +296,30 @@ def test_delete_service_no_refund_on_traffic_error() -> None:
         assert result.refunded_bytes == 0
         reseller_repo.subtract_lifetime_allocated.assert_not_called()
         panel_repo.subtract_lifetime_allocated.assert_not_called()
+        svc.client_repo.delete.assert_awaited_once()
+
+    asyncio.run(_run())
+
+
+def test_delete_service_aborts_when_panel_delete_fails() -> None:
+    async def _run() -> None:
+        svc, xui, reseller_repo, _ = _delete_service_mocks(used_bytes=0)
+        xui.delete_client = AsyncMock(side_effect=XuiError("timeout"))
+        xui.get_client = AsyncMock(return_value={"email": "r100_test"})
+        with pytest.raises(XuiError):
+            await _delete_service(svc, _reseller())
+        svc.client_repo.delete.assert_not_called()
+        reseller_repo.subtract_lifetime_allocated.assert_not_called()
+
+    asyncio.run(_run())
+
+
+def test_delete_service_proceeds_when_client_already_gone() -> None:
+    async def _run() -> None:
+        svc, xui, _, _ = _delete_service_mocks(used_bytes=0)
+        xui.delete_client = AsyncMock(side_effect=XuiError("record not found"))
+        xui.get_client = AsyncMock(return_value=None)
+        await _delete_service(svc, _reseller())
         svc.client_repo.delete.assert_awaited_once()
 
     asyncio.run(_run())

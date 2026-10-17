@@ -5,6 +5,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from bot.utils.numbers import parse_number
 from bot.handlers.admin import _is_admin
 from bot.keyboards import labels as btn
 from bot.keyboards.common import (
@@ -27,6 +28,8 @@ from bot.keyboards.common import (
 )
 from bot.states import AddResellerStates, EditResellerStates
 from bot.texts import fa as t
+from bot.utils.report_format import format_hub_totals
+from db.models import Reseller
 from db.repository import (
     PanelRepository,
     ResellerPanelRepository,
@@ -36,7 +39,7 @@ from db.repository import (
 )
 from db.session import get_session_factory
 from services.panel_registry import PanelNotFoundError, PanelRegistry
-from services.quota import QuotaService, format_max_clients_admin
+from services.quota import QuotaService, QuotaStatus, format_max_clients_admin
 from services.reseller_edit import (
     ResellerNotFoundError,
     apply_add_quota,
@@ -71,27 +74,36 @@ async def _panel_names_for_resellers(
     return names
 
 
+async def _load_reseller_stats(
+    session, resellers: list[Reseller]
+) -> dict[int, QuotaStatus]:
+    """Quota status per reseller. Database only — no panel calls."""
+    quota = QuotaService(
+        ResellerRepository(session), ResellerPanelRepository(session)
+    )
+    return {r.telegram_id: await quota.global_status(r) for r in resellers[:20]}
+
+
 async def _reseller_hub_content() -> tuple[str, object]:
     async with get_session_factory()() as session:
         rows = await ResellerRepository(session).list_all()
         panel_names = await _panel_names_for_resellers(session, rows)
+        stats = await _load_reseller_stats(session, rows)
 
     if not rows:
         return f"{t.RESELLER_LIST_EMPTY}\n\n{t.RESELLER_HUB_HINT}", reseller_admin_hub_kb(
-            [], {}
+            [], {}, {}
         )
 
     lines = [t.RESELLER_LIST_HEADER]
-    for r in rows[:20]:
-        name = r.display_name or str(r.telegram_id)
-        p_name = panel_names.get(r.panel_id, f"#{r.panel_id}")
-        status = "فعال" if r.is_active else "غیرفعال"
-        lines.append(f"• {name} — {p_name} — {status}")
+    lines.extend(
+        format_hub_totals(len(rows), sum(1 for r in rows if r.is_active))
+    )
     if len(rows) > 20:
         lines.append(f"… و {len(rows) - 20} ریسلر دیگر")
     lines.append("")
     lines.append(t.RESELLER_HUB_HINT)
-    return "\n".join(lines), reseller_admin_hub_kb(rows, panel_names)
+    return "\n".join(lines), reseller_admin_hub_kb(rows, panel_names, stats)
 
 
 async def _reseller_view_content(
@@ -117,21 +129,25 @@ async def _reseller_view_content(
             st = await quota_svc.status(reseller, a.panel_id)
             client_count += st.client_count
             mark = " *" if a.panel_id == reseller.panel_id else ""
+            # One "label: value" per line — two numeric runs on a single RTL
+            # line get reordered by Telegram's bidi renderer (commit 0d9632d).
             panel_lines.append(
-                f"• {pname}{mark}: {st.client_count} سرویس | "
-                f"تخصیص: {st.active_gb:.1f} GB"
+                t.RESELLER_VIEW_PANEL_LINE.format(
+                    panel_name=f"{pname}{mark}",
+                    client_count=st.client_count,
+                    active_gb=f"{st.active_gb:.1f}",
+                )
             )
         panels_summary = "\n".join(panel_lines) if panel_lines else "—"
-        panels_summary = (
-            f"سهمیه کل: {global_st.remaining_gb:.1f}/{global_st.quota_gb:.1f} GB\n"
-            f"{panels_summary}"
-        )
 
     text = t.RESELLER_VIEW_DETAIL.format(
         label=reseller_label(reseller),
         status="فعال" if reseller.is_active else "غیرفعال",
         panel_name=panel_name,
         panel_id=reseller.panel_id,
+        quota_gb=f"{global_st.quota_gb:.1f}",
+        lifetime_gb=f"{global_st.lifetime_gb:.1f}",
+        remaining_gb=f"{global_st.remaining_gb:.1f}",
         panels_summary=panels_summary,
         client_count=client_count,
     )
@@ -309,6 +325,24 @@ async def reseller_view(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("rsl:refresh:"))
+async def reseller_refresh(callback: CallbackQuery) -> None:
+    if not _is_admin(callback.from_user.id if callback.from_user else None):
+        return
+    if not callback.data or not callback.message:
+        await callback.answer()
+        return
+    try:
+        tg_id = int(callback.data.split(":", 2)[2])
+    except (ValueError, IndexError):
+        await callback.answer(t.INVALID_INPUT, show_alert=True)
+        return
+    if not await _edit_reseller_view(callback.message, tg_id):  # type: ignore[arg-type]
+        await callback.answer("ریسلر یافت نشد.", show_alert=True)
+        return
+    await callback.answer(t.REPORT_UPDATED)
+
+
 @router.callback_query(F.data.startswith("rsl:toggle:"))
 async def reseller_toggle(callback: CallbackQuery) -> None:
     if not _is_admin(callback.from_user.id if callback.from_user else None):
@@ -473,7 +507,7 @@ async def wizard_quota_quick(
         await callback.answer()
         return
     try:
-        quota = float(callback.data.split(":", 2)[2])
+        quota = parse_number(callback.data.split(":", 2)[2])
     except (ValueError, IndexError):
         await callback.answer(t.INVALID_INPUT, show_alert=True)
         return
@@ -492,7 +526,7 @@ async def wizard_quota_text(
     if not _is_admin(message.from_user.id if message.from_user else None):
         return
     try:
-        quota = float((message.text or "").replace(",", "."))
+        quota = parse_number(message.text or "")
         if quota <= 0:
             raise ValueError
     except ValueError:
@@ -679,7 +713,7 @@ async def edit_quota_quick(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         return
     parts = callback.data.split(":")
-    quota_gb = float(parts[2])
+    quota_gb = parse_number(parts[2])
     tg_id = int(parts[3])
     async with get_session_factory()() as session:
         try:
@@ -720,7 +754,7 @@ async def edit_add_quota_quick(callback: CallbackQuery, state: FSMContext) -> No
         await callback.answer()
         return
     parts = callback.data.split(":")
-    add_gb = float(parts[2])
+    add_gb = parse_number(parts[2])
     tg_id = int(parts[3])
     async with get_session_factory()() as session:
         try:
@@ -764,7 +798,7 @@ async def edit_subtract_quota_quick(callback: CallbackQuery, state: FSMContext) 
         await callback.answer()
         return
     parts = callback.data.split(":")
-    subtract_gb = float(parts[2])
+    subtract_gb = parse_number(parts[2])
     tg_id = int(parts[3])
     async with get_session_factory()() as session:
         try:
@@ -1072,40 +1106,44 @@ async def edit_value_text(message: Message, state: FSMContext) -> None:
     text_in = (message.text or "").strip()
 
     panel_id = data.get("panel_id")
+    # Parse first (bad input -> INVALID_INPUT), then apply (business errors such
+    # as "below allocated" are shown as-is).
+    try:
+        if kind in ("quota", "add_quota", "subtract_quota"):
+            value_gb = parse_number(text_in)
+            if value_gb <= 0:
+                raise ValueError
+        elif kind == "name":
+            display_name = normalize_display_name(text_in)
+        elif kind == "max_clients":
+            max_clients = int(text_in)
+            if max_clients < 1:
+                raise ValueError
+        else:
+            await message.answer(t.INVALID_INPUT)
+            return
+    except (ValueError, InvalidDisplayNameError):
+        await message.answer(t.INVALID_INPUT)
+        return
+
     async with get_session_factory()() as session:
         try:
             if kind == "quota":
-                quota_gb = float(text_in.replace(",", "."))
-                if quota_gb <= 0:
-                    raise ValueError
-                result = await apply_quota(session, tg_id, quota_gb)
+                result = await apply_quota(session, tg_id, value_gb)
             elif kind == "add_quota":
-                add_gb = float(text_in.replace(",", "."))
-                if add_gb <= 0:
-                    raise ValueError
-                result = await apply_add_quota(session, tg_id, add_gb)
+                result = await apply_add_quota(session, tg_id, value_gb)
             elif kind == "subtract_quota":
-                subtract_gb = float(text_in.replace(",", "."))
-                if subtract_gb <= 0:
-                    raise ValueError
-                result = await apply_subtract_quota(session, tg_id, subtract_gb)
+                result = await apply_subtract_quota(session, tg_id, value_gb)
             elif kind == "name":
-                display_name = normalize_display_name(text_in)
                 result = await apply_display_name(session, tg_id, display_name)
-            elif kind == "max_clients":
-                max_clients = int(text_in)
-                if max_clients < 1:
-                    raise ValueError
-                result = await apply_max_clients(session, tg_id, max_clients)
             else:
-                await message.answer(t.INVALID_INPUT)
-                return
+                result = await apply_max_clients(session, tg_id, max_clients)
         except ResellerNotFoundError:
             await message.answer("ریسلر یافت نشد.")
             await state.clear()
             return
-        except (ValueError, InvalidDisplayNameError):
-            await message.answer(t.INVALID_INPUT)
+        except (ValueError, InvalidDisplayNameError) as e:
+            await message.answer(str(e) or t.INVALID_INPUT)
             return
 
     await state.clear()

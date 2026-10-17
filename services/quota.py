@@ -56,6 +56,37 @@ def format_max_clients_admin(st: QuotaStatus) -> str:
     return str(st.max_clients)
 
 
+# 3x-ui treats totalGB=0 as "unlimited", so a service cap must never reach 0.
+MIN_SERVICE_TOTAL_BYTES = 1024 * 1024
+
+
+@dataclass
+class RemoveTrafficPlan:
+    removed_bytes: int
+    new_total_bytes: int
+    disable: bool
+
+
+def plan_remove_traffic(
+    current_allocated_bytes: int, removed_bytes: int, used_bytes: int
+) -> RemoveTrafficPlan:
+    """Final cap after removing traffic; a cap with nothing left disables the service.
+
+    A cap of 0 would make the client unlimited on the panel, so it is clamped to
+    max(used, MIN_SERVICE_TOTAL_BYTES) and the service is disabled instead.
+    """
+    new_total = current_allocated_bytes - removed_bytes
+    if new_total <= 0:
+        new_total = max(int(used_bytes), MIN_SERVICE_TOTAL_BYTES)
+        new_total = min(new_total, current_allocated_bytes)
+    disable = new_total <= used_bytes or new_total <= MIN_SERVICE_TOTAL_BYTES
+    return RemoveTrafficPlan(
+        removed_bytes=max(0, current_allocated_bytes - new_total),
+        new_total_bytes=new_total,
+        disable=disable,
+    )
+
+
 class QuotaExceeded(Exception):
     def __init__(self, message: str) -> None:
         super().__init__(message)
@@ -150,6 +181,34 @@ class QuotaService:
         if st.max_clients is not None and st.client_count >= st.max_clients:
             raise QuotaExceeded("به سقف تعداد سرویس روی این پنل رسیده‌اید.")
 
+        if allocated > st.remaining_bytes:
+            raise QuotaExceeded(
+                f"حجم درخواستی ({bytes_to_gb(allocated)} GB) بیشتر از باقی‌مانده "
+                f"({st.remaining_gb} GB) است."
+            )
+        return allocated
+
+    async def validate_renew(
+        self, reseller: Reseller, panel_id: int, volume_gb: float
+    ) -> int:
+        """Same rules as create, minus max_clients (the client already exists)."""
+        if not reseller.is_active:
+            raise QuotaExceeded("حساب ریسلر غیرفعال است.")
+
+        assignment = await self._get_assignment(reseller, panel_id)
+        if not assignment.is_active:
+            raise QuotaExceeded("تمدید سرویس روی این پنل ممنوع است.")
+
+        try:
+            validate_client_volume_gb(volume_gb)
+        except ValueError as e:
+            raise QuotaExceeded(str(e)) from e
+
+        allocated = gb_to_bytes(volume_gb)
+        if allocated <= 0:
+            raise QuotaExceeded("حجم باید بزرگ‌تر از صفر باشد.")
+
+        st = await self.global_status(reseller)
         if allocated > st.remaining_bytes:
             raise QuotaExceeded(
                 f"حجم درخواستی ({bytes_to_gb(allocated)} GB) بیشتر از باقی‌مانده "

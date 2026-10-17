@@ -2,9 +2,10 @@ import re
 from typing import NamedTuple
 
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.types import Message
 
+from bot.utils.numbers import parse_number
 from bot.config import get_settings
 from bot.keyboards.common import admin_main_kb
 from bot.keyboards import labels as btn
@@ -63,7 +64,7 @@ def _parse_add_reseller(text: str) -> AddResellerParsed:
         try:
             panel_id = int(parts[1])
             if 1 <= panel_id <= _MAX_PANEL_ID_HEURISTIC:
-                quota_gb = float(parts[2].replace(",", "."))
+                quota_gb = parse_number(parts[2])
                 inbound_ids = [int(x) for x in parts[3:]]
                 if inbound_ids:
                     return AddResellerParsed(
@@ -74,7 +75,7 @@ def _parse_add_reseller(text: str) -> AddResellerParsed:
 
     # Legacy: id quota inbounds -> panel 1
     try:
-        quota_gb = float(parts[1].replace(",", "."))
+        quota_gb = parse_number(parts[1])
         inbound_ids = [int(x) for x in parts[2:]]
         if inbound_ids:
             return AddResellerParsed(tg_id, None, 1, quota_gb, inbound_ids)
@@ -87,7 +88,7 @@ def _parse_add_reseller(text: str) -> AddResellerParsed:
             display_name = normalize_display_name(parts[1])
             panel_id = int(parts[2])
             if 1 <= panel_id <= _MAX_PANEL_ID_HEURISTIC:
-                quota_gb = float(parts[3].replace(",", "."))
+                quota_gb = parse_number(parts[3])
                 inbound_ids = [int(x) for x in parts[4:]]
                 if inbound_ids:
                     return AddResellerParsed(
@@ -98,7 +99,7 @@ def _parse_add_reseller(text: str) -> AddResellerParsed:
 
     # Legacy named: id name quota inbounds -> panel 1
     display_name = normalize_display_name(parts[1])
-    quota_gb = float(parts[2].replace(",", "."))
+    quota_gb = parse_number(parts[2])
     inbound_ids = [int(x) for x in parts[3:]]
     if not inbound_ids:
         raise ValueError("no inbounds")
@@ -113,20 +114,32 @@ async def admin_help(message: Message) -> None:
     await message.answer(t.ADMIN_MENU, parse_mode="Markdown", reply_markup=admin_main_kb())
 
 
-@router.message(F.text.regexp(_ADD_RESELLER_PATTERN))
+def _from_admin(message: Message) -> bool:
+    return _is_admin(message.from_user.id if message.from_user else None)
+
+
+# Only outside any FSM flow and only for admins: otherwise this pattern swallows
+# card numbers, receipts, plan names... typed in other flows.
+@router.message(
+    StateFilter(None), F.text.regexp(_ADD_RESELLER_PATTERN), _from_admin
+)
 async def add_reseller_inline(
     message: Message, panel_registry: PanelRegistry
 ) -> None:
     """Format: telegram_id quota_gb inbound... OR telegram_id name quota_gb inbound..."""
-    if not _is_admin(message.from_user.id if message.from_user else None):
-        return
     try:
         parsed = _parse_add_reseller(message.text or "")  # type: ignore[arg-type]
     except (ValueError, InvalidDisplayNameError):
         await message.answer(t.INVALID_INPUT)
         return
+    if parsed.telegram_id <= 0:
+        await message.answer(t.INVALID_INPUT)
+        return
 
     async with get_session_factory()() as session:
+        if await ResellerRepository(session).get(parsed.telegram_id):
+            await message.answer(t.RESELLER_ALREADY_EXISTS)
+            return
         panel = await PanelRepository(session).get(parsed.panel_id)
         if not panel:
             await message.answer(t.PANEL_NOT_FOUND)
@@ -172,7 +185,7 @@ async def set_quota(message: Message) -> None:
         return
     try:
         tg_id = int(parts[1])
-        quota_gb = float(parts[2])
+        quota_gb = parse_number(parts[2])
     except ValueError:
         await message.answer(t.INVALID_INPUT)
         return
@@ -199,7 +212,7 @@ async def add_quota_cmd(message: Message) -> None:
         return
     try:
         tg_id = int(parts[1])
-        add_gb = float(parts[2].replace(",", "."))
+        add_gb = parse_number(parts[2])
     except ValueError:
         await message.answer(t.INVALID_INPUT)
         return
@@ -226,7 +239,7 @@ async def subtract_quota_cmd(message: Message) -> None:
         return
     try:
         tg_id = int(parts[1])
-        subtract_gb = float(parts[2].replace(",", "."))
+        subtract_gb = parse_number(parts[2])
     except ValueError:
         await message.answer(t.INVALID_INPUT)
         return

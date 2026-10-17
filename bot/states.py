@@ -15,18 +15,28 @@ class ExtendExpiryStates(StatesGroup):
 
 
 class AddTrafficStates(StatesGroup):
+    choose = State()
     volume = State()
     confirm = State()
 
 
 class ReduceTrafficStates(StatesGroup):
+    choose = State()
     volume = State()
+    confirm = State()
+
+
+class RenewServiceStates(StatesGroup):
+    pick_source = State()
+    volume = State()
+    expiry = State()
     confirm = State()
 
 
 class EditServiceStates(StatesGroup):
     limit_ip = State()
     comment = State()
+    rename = State()
 
 
 class AddTemplateStates(StatesGroup):
@@ -97,6 +107,10 @@ class AddPlanStates(StatesGroup):
     expiry = State()
     price = State()
     confirm = State()
+
+
+class EditPlanStates(StatesGroup):
+    value = State()
 
 
 class GuestConfigStates(StatesGroup):

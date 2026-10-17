@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.utils.panel_url import normalize_http_url, normalize_sub_public_url
@@ -16,6 +16,7 @@ from db.models import (
     ServiceTemplate,
     UsageAlertSent,
 )
+from services.client_volume import MIN_CLIENT_VOLUME_GB
 
 _MAX_TEMPLATE_NAME_LEN = 64
 
@@ -58,8 +59,11 @@ def normalize_plan_name(raw: str) -> str:
 
 
 def validate_plan_params(volume_gb: float, expiry_days: int, price_toman: int) -> None:
-    if volume_gb <= 0:
-        raise InvalidPlanError("حجم باید بزرگ‌تر از صفر باشد.")
+    if volume_gb < MIN_CLIENT_VOLUME_GB:
+        # Smaller plans could never be sold (services have a minimum volume).
+        raise InvalidPlanError(
+            f"حجم پلن باید حداقل {MIN_CLIENT_VOLUME_GB:g} GB باشد."
+        )
     if expiry_days < 0:
         raise InvalidPlanError("روز انقضا نمی‌تواند منفی باشد.")
     if price_toman <= 0:
@@ -332,27 +336,42 @@ class ResellerRepository:
         """Sum of active service allocations (alias for active_bytes)."""
         return await self.active_bytes(telegram_id)
 
-    async def add_lifetime_allocated(self, telegram_id: int, delta: int) -> None:
+    async def _atomic_update(self, telegram_id: int, **values) -> Reseller | None:
+        """Apply an in-SQL update (x = x + d) so concurrent sessions can't lose writes."""
+        result = await self.session.execute(
+            update(Reseller)
+            .where(Reseller.telegram_id == telegram_id)
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        await self.session.commit()
+        if not result.rowcount:
+            return None
         row = await self.get(telegram_id)
+        if row is not None:
+            await self.session.refresh(row)
+            await self._sync_primary_panel_assignment(row)
+        return row
+
+    async def add_lifetime_allocated(self, telegram_id: int, delta: int) -> None:
+        row = await self._atomic_update(
+            telegram_id,
+            lifetime_allocated_bytes=Reseller.lifetime_allocated_bytes + delta,
+        )
         if not row:
             raise ValueError("ریسلر یافت نشد.")
-        row.lifetime_allocated_bytes += delta
-        await self.session.commit()
-        await self.session.refresh(row)
-        await self._sync_primary_panel_assignment(row)
 
     async def subtract_lifetime_allocated(
         self, telegram_id: int, delta: int
     ) -> None:
-        row = await self.get(telegram_id)
+        row = await self._atomic_update(
+            telegram_id,
+            lifetime_allocated_bytes=func.max(
+                0, Reseller.lifetime_allocated_bytes - delta
+            ),
+        )
         if not row:
             raise ValueError("ریسلر یافت نشد.")
-        row.lifetime_allocated_bytes = max(
-            0, int(row.lifetime_allocated_bytes or 0) - delta
-        )
-        await self.session.commit()
-        await self.session.refresh(row)
-        await self._sync_primary_panel_assignment(row)
 
     async def reset_lifetime_to_active(self, telegram_id: int) -> Reseller | None:
         row = await self.get(telegram_id)
@@ -365,14 +384,9 @@ class ResellerRepository:
         return row
 
     async def add_quota_bytes(self, telegram_id: int, delta: int) -> Reseller | None:
-        row = await self.get(telegram_id)
-        if not row:
-            return None
-        row.quota_bytes += delta
-        await self.session.commit()
-        await self.session.refresh(row)
-        await self._sync_primary_panel_assignment(row)
-        return row
+        return await self._atomic_update(
+            telegram_id, quota_bytes=Reseller.quota_bytes + delta
+        )
 
     async def subtract_quota_bytes(
         self, telegram_id: int, delta: int
@@ -432,6 +446,9 @@ class ResellerRepository:
             delete(UsageAlertSent).where(
                 UsageAlertSent.reseller_tg_id == telegram_id
             )
+        )
+        await self.session.execute(
+            delete(ResellerPanel).where(ResellerPanel.reseller_tg_id == telegram_id)
         )
         await self.session.delete(row)
         await self.session.commit()
@@ -635,6 +652,14 @@ class ResellerPanelRepository:
         await self.session.commit()
         return True
 
+    async def list_for_panel(self, panel_id: int) -> list[ResellerPanel]:
+        result = await self.session.scalars(
+            select(ResellerPanel)
+            .where(ResellerPanel.panel_id == panel_id)
+            .order_by(ResellerPanel.reseller_tg_id)
+        )
+        return list(result.all())
+
     async def assignment_count_on_panel(self, panel_id: int) -> int:
         result = await self.session.scalar(
             select(func.count())
@@ -663,6 +688,17 @@ class ClientRepository:
             select(ClientRecord).where(
                 ClientRecord.reseller_tg_id == reseller_tg_id,
                 ClientRecord.email == email,
+            )
+        )
+
+    async def get_for_reseller_id(
+        self, reseller_tg_id: int, record_id: int
+    ) -> ClientRecord | None:
+        """Ownership is enforced in the query — record ids are guessable."""
+        return await self.session.scalar(
+            select(ClientRecord).where(
+                ClientRecord.reseller_tg_id == reseller_tg_id,
+                ClientRecord.id == record_id,
             )
         )
 
@@ -720,6 +756,20 @@ class ClientRepository:
 
     async def set_sub_id(self, record: ClientRecord, sub_id: str) -> ClientRecord:
         record.sub_id = sub_id
+        await self.session.commit()
+        await self.session.refresh(record)
+        return record
+
+    async def set_email(self, record: ClientRecord, email: str) -> ClientRecord:
+        record.email = email
+        await self.session.commit()
+        await self.session.refresh(record)
+        return record
+
+    async def set_allocated_bytes(
+        self, record: ClientRecord, value: int
+    ) -> ClientRecord:
+        record.allocated_bytes = max(0, int(value))
         await self.session.commit()
         await self.session.refresh(record)
         return record
@@ -1094,6 +1144,48 @@ class PlanRepository:
         await self.session.refresh(row)
         return row
 
+    async def update(
+        self,
+        plan_id: int,
+        *,
+        name: str | None = None,
+        volume_gb: float | None = None,
+        expiry_days: int | None = None,
+        price_toman: int | None = None,
+    ) -> Plan | None:
+        row = await self.session.get(Plan, plan_id)
+        if row is None:
+            return None
+        new_name = normalize_plan_name(name) if name is not None else row.name
+        new_volume = row.volume_gb if volume_gb is None else volume_gb
+        new_days = row.expiry_days if expiry_days is None else expiry_days
+        new_price = row.price_toman if price_toman is None else price_toman
+        validate_plan_params(new_volume, new_days, new_price)
+        row.name = new_name
+        row.volume_gb = new_volume
+        row.expiry_days = new_days
+        row.price_toman = new_price
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def move(self, plan_id: int, direction: int) -> bool:
+        """Swap a plan with its neighbour in display order (direction -1 up, +1 down)."""
+        plans = await self.list_all()
+        ids = [p.id for p in plans]
+        if plan_id not in ids:
+            return False
+        i = ids.index(plan_id)
+        j = i + (1 if direction > 0 else -1)
+        if j < 0 or j >= len(plans):
+            return False
+        plans[i], plans[j] = plans[j], plans[i]
+        # Re-number so duplicate/legacy sort_order values can't block moves.
+        for order, plan in enumerate(plans):
+            plan.sort_order = order
+        await self.session.commit()
+        return True
+
     async def set_active(self, plan_id: int, active: bool) -> Plan | None:
         row = await self.session.get(Plan, plan_id)
         if row is None:
@@ -1132,6 +1224,9 @@ class GuestOrderRepository:
         receipt_kind: str,
         receipt_file_id: str | None = None,
         receipt_text: str | None = None,
+        plan: Plan | None = None,
+        kind: str = "new",
+        target_client_record_id: int | None = None,
     ) -> GuestOrder:
         row = GuestOrder(
             telegram_id=telegram_id,
@@ -1141,6 +1236,11 @@ class GuestOrderRepository:
             receipt_kind=receipt_kind,
             receipt_file_id=receipt_file_id,
             receipt_text=receipt_text,
+            kind=kind,
+            target_client_record_id=target_client_record_id,
+            volume_gb=plan.volume_gb if plan else None,
+            expiry_days=plan.expiry_days if plan else None,
+            price_toman=plan.price_toman if plan else None,
         )
         self.session.add(row)
         await self.session.commit()
@@ -1186,6 +1286,72 @@ class GuestOrderRepository:
             .limit(limit)
         )
         return list(result.all())
+
+    async def _transition(self, order_id: int, from_status: str, **values) -> bool:
+        """Atomically move an order out of from_status; False if it already moved."""
+        result = await self.session.execute(
+            update(GuestOrder)
+            .where(GuestOrder.id == order_id, GuestOrder.status == from_status)
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        await self.session.commit()
+        return result.rowcount == 1
+
+    async def list_delivered_records(self, telegram_id: int) -> list[ClientRecord]:
+        """Accounts delivered (or renewed) for this guest, newest first."""
+        result = await self.session.scalars(
+            select(ClientRecord)
+            .join(GuestOrder, GuestOrder.client_record_id == ClientRecord.id)
+            .where(
+                GuestOrder.telegram_id == telegram_id,
+                GuestOrder.status == "approved",
+            )
+            .group_by(ClientRecord.id)
+            .order_by(ClientRecord.id.desc())
+        )
+        return list(result.all())
+
+    async def owns_record(self, telegram_id: int, record_id: int) -> bool:
+        found = await self.session.scalar(
+            select(GuestOrder.id)
+            .where(
+                GuestOrder.telegram_id == telegram_id,
+                GuestOrder.status == "approved",
+                GuestOrder.client_record_id == record_id,
+            )
+            .limit(1)
+        )
+        return found is not None
+
+    async def user_owns_service(self, telegram_id: int, email: str) -> bool:
+        """True if email is the service delivered for one of this guest's orders."""
+        found = await self.session.scalar(
+            select(GuestOrder.id)
+            .join(ClientRecord, ClientRecord.id == GuestOrder.client_record_id)
+            .where(GuestOrder.telegram_id == telegram_id, ClientRecord.email == email)
+            .limit(1)
+        )
+        return found is not None
+
+    async def claim_pending(self, order_id: int) -> bool:
+        """Reserve a pending order for delivery (guards double-click / two admins)."""
+        return await self._transition(order_id, "pending", status="processing")
+
+    async def release_claim(self, order_id: int) -> bool:
+        """Put a claimed order back to pending after a failed delivery."""
+        return await self._transition(order_id, "processing", status="pending")
+
+    async def reject_if_pending(
+        self, order_id: int, reason: str | None = None
+    ) -> bool:
+        return await self._transition(
+            order_id,
+            "pending",
+            status="rejected",
+            reject_reason=reason,
+            decided_at=datetime.now(timezone.utc),
+        )
 
     async def mark_approved(
         self, order_id: int, client_record_id: int

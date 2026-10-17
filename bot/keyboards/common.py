@@ -1,9 +1,31 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from datetime import datetime
+
+from aiogram.enums import ButtonStyle
+from aiogram.types import (
+    CopyTextButton,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
 
 from bot.keyboards import labels as L
 from bot.utils.format_delivery import config_display_label
+from bot.utils.format_traffic import (
+    EXPIRY_EXPIRED,
+    EXPIRY_SOON,
+    service_status,
+)
 from bot.utils.report_format import format_report_button_label, usage_percent_int
-from db.models import GuestSalesConfig, Panel, Plan, Reseller, ServiceTemplate
+from bot.utils.fa_text import RLM, fa_days, fa_digits, fa_gb, fa_toman, rtl
+from db.models import (
+    ClientRecord,
+    GuestSalesConfig,
+    Panel,
+    Plan,
+    Reseller,
+    ServiceTemplate,
+)
 from services.client_volume import MIN_CLIENT_VOLUME_GB
 from xui.client import VlessConfig
 
@@ -27,8 +49,11 @@ def reseller_main_kb() -> ReplyKeyboardMarkup:
 def guest_main_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=L.BUY_ACCOUNT), KeyboardButton(text=L.MY_ORDERS)],
-            [KeyboardButton(text=L.SUPPORT)],
+            [
+                KeyboardButton(text=L.BUY_ACCOUNT, style=ButtonStyle.SUCCESS),
+                KeyboardButton(text=L.MY_ACCOUNTS, style=ButtonStyle.PRIMARY),
+            ],
+            [KeyboardButton(text=L.MY_ORDERS), KeyboardButton(text=L.SUPPORT)],
         ],
         resize_keyboard=True,
     )
@@ -39,18 +64,17 @@ def admin_main_kb() -> ReplyKeyboardMarkup:
         keyboard=[
             [
                 KeyboardButton(text=L.LIST_RESELLERS),
-                KeyboardButton(text=L.REPORTS),
-            ],
-            [
                 KeyboardButton(text=L.SERVICE_TEMPLATES),
+            ],
+            [
                 KeyboardButton(text=L.PANELS),
-            ],
-            [
                 KeyboardButton(text=L.SET_PANEL_RESELLER),
-                KeyboardButton(text=L.BOT_UPDATE),
             ],
             [
+                KeyboardButton(text=L.BOT_UPDATE),
                 KeyboardButton(text=L.BACKUP),
+            ],
+            [
                 KeyboardButton(text=L.BROADCAST),
             ],
             [
@@ -224,6 +248,16 @@ def panel_view_kb(panel_id: int, *, is_active: bool) -> InlineKeyboardMarkup:
                     text=L.LIST_INBOUNDS,
                     callback_data=f"pnl:inbounds:{panel_id}",
                 ),
+                InlineKeyboardButton(
+                    text=L.BULK_INBOUNDS,
+                    callback_data=f"pnl:bulk:{panel_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.INBOUND_HEALTH,
+                    callback_data=f"pnl:health:{panel_id}",
+                ),
             ],
             [
                 InlineKeyboardButton(
@@ -232,6 +266,79 @@ def panel_view_kb(panel_id: int, *, is_active: bool) -> InlineKeyboardMarkup:
                 ),
             ],
             [InlineKeyboardButton(text=L.BACK, callback_data="pnl:hub")],
+        ]
+    )
+
+
+def panel_bulk_inbounds_kb(
+    panel_id: int,
+    inbounds: list[dict],
+    coverage: dict[int, tuple[int, int]],
+    orphan_ids: list[int] | None = None,
+) -> InlineKeyboardMarkup:
+    """One row per inbound, showing how many resellers already hold it.
+
+    Orphans — ids still referenced by reseller rows but no longer on the panel —
+    are listed too. They are the whole reason this screen exists: without them
+    an admin cannot clear a reference to a deleted inbound, which is what makes
+    service creation fail with the panel's "record not found".
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    for ib in inbounds[:25]:
+        try:
+            ib_id = int(ib.get("id", ib.get("inboundId", 0)))
+        except (TypeError, ValueError):
+            continue
+        if not ib_id:
+            continue
+        have, total = coverage.get(ib_id, (0, 0))
+        protocol = ib.get("protocol", "")
+        port = ib.get("port", "")
+        # Pure ASCII label: no Persian words mixed with the counters.
+        label = f"#{ib_id} {protocol}:{port} — {have}/{total}"
+        if len(label) > 40:
+            label = label[:37] + "..."
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=f"pnl:bulk:pick:{panel_id}:{ib_id}",
+                )
+            ]
+        )
+    for ib_id in (orphan_ids or [])[:10]:
+        have, total = coverage.get(ib_id, (0, 0))
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"⚠️ #{ib_id} — {have}/{total}",
+                    callback_data=f"pnl:bulk:pick:{panel_id}:{ib_id}",
+                )
+            ]
+        )
+    rows.append(
+        [InlineKeyboardButton(text=L.BACK, callback_data=f"pnl:view:{panel_id}")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def panel_bulk_confirm_kb(
+    panel_id: int, inbound_id: int, *, enable: bool
+) -> InlineKeyboardMarkup:
+    action = "on" if enable else "off"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.BULK_ADD_ALL if enable else L.BULK_REMOVE_ALL,
+                    callback_data=f"pnl:bulk:go:{panel_id}:{inbound_id}:{action}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.CANCEL, callback_data=f"pnl:bulk:{panel_id}"
+                ),
+            ],
         ]
     )
 
@@ -384,30 +491,16 @@ def set_panel_confirm_kb() -> InlineKeyboardMarkup:
 
 
 def reseller_admin_hub_kb(
-    resellers: list[Reseller], panel_names: dict[int, str]
-) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = []
-    for r in resellers[:20]:
-        name = r.display_name or str(r.telegram_id)
-        p_name = panel_names.get(r.panel_id, f"#{r.panel_id}")
-        label = L.reseller_hub_row_label(name, p_name, is_active=r.is_active)
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=label,
-                    callback_data=f"rsl:view:{r.telegram_id}",
-                )
-            ]
-        )
-    rows.append([InlineKeyboardButton(text=L.ADD_RESELLER, callback_data="rsl:add")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def reseller_report_hub_kb(
     resellers: list[Reseller],
     panel_names: dict[int, str],
     stats: dict[int, object],
 ) -> InlineKeyboardMarkup:
+    """Reseller list, carrying the usage figures the report hub used to show.
+
+    Labels stay pure ASCII (name is validated `[a-zA-Z0-9_-]+`), so packing the
+    service count and usage percent here is bidi-safe in a way the old Persian
+    summary lines were not.
+    """
     rows: list[list[InlineKeyboardButton]] = []
     for r in resellers[:20]:
         name = r.display_name or str(r.telegram_id)
@@ -428,28 +521,12 @@ def reseller_report_hub_kb(
             [
                 InlineKeyboardButton(
                     text=label,
-                    callback_data=f"rpt:view:{r.telegram_id}",
+                    callback_data=f"rsl:view:{r.telegram_id}",
                 )
             ]
         )
+    rows.append([InlineKeyboardButton(text=L.ADD_RESELLER, callback_data="rsl:add")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def reseller_report_view_kb(telegram_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=L.REFRESH,
-                    callback_data=f"rpt:refresh:{telegram_id}",
-                ),
-                InlineKeyboardButton(
-                    text=L.BACK,
-                    callback_data="rpt:back",
-                ),
-            ],
-        ]
-    )
 
 
 def reseller_view_kb(
@@ -457,6 +534,10 @@ def reseller_view_kb(
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [
+            InlineKeyboardButton(
+                text=L.REFRESH,
+                callback_data=f"rsl:refresh:{telegram_id}",
+            ),
             InlineKeyboardButton(
                 text=L.active_toggle_label(is_active=is_active),
                 callback_data=f"rsl:toggle:{telegram_id}",
@@ -1113,16 +1194,48 @@ def plan_admin_hub_kb(plans: list[Plan]) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text=f"{status} {label}",
-                    callback_data=f"aplan:toggle:{p.id}",
-                ),
-                InlineKeyboardButton(
-                    text="🗑",
-                    callback_data=f"aplan:del:{p.id}",
+                    callback_data=f"aplan:view:{p.id}",
                 ),
             ]
         )
     rows.append([InlineKeyboardButton(text=L.ADD_PLAN, callback_data="aplan:add")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def plan_detail_kb(plan: Plan) -> InlineKeyboardMarkup:
+    pid = plan.id
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=L.PLAN_EDIT_NAME, callback_data=f"aplan:edit:name:{pid}"),
+                InlineKeyboardButton(text=L.PLAN_EDIT_PRICE, callback_data=f"aplan:edit:price:{pid}"),
+            ],
+            [
+                InlineKeyboardButton(text=L.PLAN_EDIT_VOLUME, callback_data=f"aplan:edit:volume:{pid}"),
+                InlineKeyboardButton(text=L.PLAN_EDIT_DAYS, callback_data=f"aplan:edit:days:{pid}"),
+            ],
+            [
+                InlineKeyboardButton(text=L.PLAN_MOVE_UP, callback_data=f"aplan:move:up:{pid}"),
+                InlineKeyboardButton(text=L.PLAN_MOVE_DOWN, callback_data=f"aplan:move:down:{pid}"),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.active_toggle_label(is_active=plan.is_active),
+                    callback_data=f"aplan:toggle:{pid}",
+                ),
+                InlineKeyboardButton(text=L.DELETE, callback_data=f"aplan:del:{pid}"),
+            ],
+            [InlineKeyboardButton(text=L.BACK, callback_data="aplan:hub")],
+        ]
+    )
+
+
+def plan_edit_cancel_kb(plan_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=L.CANCEL, callback_data=f"aplan:view:{plan_id}")]
+        ]
+    )
 
 
 def plan_delete_confirm_kb(plan_id: int) -> InlineKeyboardMarkup:
@@ -1140,7 +1253,7 @@ def plan_delete_confirm_kb(plan_id: int) -> InlineKeyboardMarkup:
 
 
 def plan_wizard_volume_kb() -> InlineKeyboardMarkup:
-    volumes = (5, 10, 20, 50, 100)
+    volumes = (20, 30, 50, 100, 200)
     row = [
         InlineKeyboardButton(text=f"{v} GB", callback_data=f"aplan:vol:{v}")
         for v in volumes
@@ -1206,17 +1319,122 @@ def plan_wizard_confirm_kb() -> InlineKeyboardMarkup:
     )
 
 
-def guest_plan_picker_kb(plans: list[Plan]) -> InlineKeyboardMarkup:
+def guest_plan_button_label(plan: Plan) -> str:
+    # RTL-safe: Persian digits/units and a leading RLM (see bot/utils/fa_text.py).
+    name = plan.name if len(plan.name) <= 20 else plan.name[:19] + "…"
+    # The name may be Latin or a flag (bidi class L); the RLM after it keeps it
+    # from merging with the number that follows.
+    return rtl(
+        f"{name}{RLM} | {fa_gb(plan.volume_gb)} | {fa_days(plan.expiry_days)}"
+        f" | {fa_toman(plan.price_toman)} تومان"
+    )
+
+
+def guest_plan_picker_kb(
+    plans: list[Plan], *, renew_record_id: int | None = None
+) -> InlineKeyboardMarkup:
+    """Plan buttons for a new purchase, or for renewing renew_record_id."""
     eligible = [p for p in plans if p.volume_gb >= MIN_CLIENT_VOLUME_GB]
     rows: list[list[InlineKeyboardButton]] = []
     for p in eligible:
-        label = f"{p.name} — {p.volume_gb}GB — {p.price_toman} تومان"
-        if len(label) > 40:
-            label = label[:37] + "..."
+        cb = (
+            f"gplan:{p.id}"
+            if renew_record_id is None
+            else f"grenew:{renew_record_id}:{p.id}"
+        )
         rows.append(
-            [InlineKeyboardButton(text=label, callback_data=f"gplan:{p.id}")]
+            [
+                InlineKeyboardButton(
+                    text=guest_plan_button_label(p),
+                    callback_data=cb,
+                    style=ButtonStyle.SUCCESS,
+                )
+            ]
+        )
+    if renew_record_id is not None:
+        rows.append(
+            [InlineKeyboardButton(text=L.BACK, callback_data=f"gacc:v:{renew_record_id}")]
         )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def guest_payment_kb(card_number: str | None) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    card = (card_number or "").strip()
+    if card:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=L.GUEST_COPY_CARD,
+                    copy_text=CopyTextButton(text=card.replace(" ", "").replace("-", "")),
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=L.GUEST_CANCEL_PAYMENT,
+                callback_data="gpay:cancel",
+                style=ButtonStyle.DANGER,
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def guest_my_accounts_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.MY_ACCOUNTS,
+                    callback_data="gacc:list",
+                    style=ButtonStyle.PRIMARY,
+                )
+            ]
+        ]
+    )
+
+
+def _guest_account_label(record: ClientRecord) -> str:
+    expiry_ms = int(record.expiry_time or 0)
+    if expiry_ms <= 0:
+        expiry = "نامحدود"
+    else:
+        expiry = fa_digits(datetime.fromtimestamp(expiry_ms / 1000).strftime("%Y/%m/%d"))
+    return rtl(f"🔹 اکانت {fa_digits(record.id)} | انقضا: {expiry}")
+
+
+def guest_accounts_list_kb(records: list[ClientRecord]) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=_guest_account_label(r), callback_data=f"gacc:v:{r.id}"
+            )
+        ]
+        for r in records
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def guest_account_detail_kb(record_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.GUEST_LINK_QR,
+                    callback_data=f"gacc:link:{record_id}",
+                    style=ButtonStyle.PRIMARY,
+                ),
+                InlineKeyboardButton(
+                    text=L.GUEST_RENEW,
+                    callback_data=f"gacc:renew:{record_id}",
+                    style=ButtonStyle.SUCCESS,
+                ),
+            ],
+            [InlineKeyboardButton(text=L.BACK, callback_data="gacc:back")],
+        ]
+    )
 
 
 def guest_order_review_kb(order_id: int) -> InlineKeyboardMarkup:
@@ -1224,10 +1442,14 @@ def guest_order_review_kb(order_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✅ تأیید و تحویل", callback_data=f"gorder:approve:{order_id}"
+                    text=L.GUEST_APPROVE_ORDER,
+                    callback_data=f"gorder:approve:{order_id}",
+                    style=ButtonStyle.SUCCESS,
                 ),
                 InlineKeyboardButton(
-                    text="❌ رد", callback_data=f"gorder:reject:{order_id}"
+                    text=L.GUEST_REJECT_ORDER,
+                    callback_data=f"gorder:reject:{order_id}",
+                    style=ButtonStyle.DANGER,
                 ),
             ]
         ]
@@ -1319,6 +1541,37 @@ def template_picker_kb(templates: list[ServiceTemplate]) -> InlineKeyboardMarkup
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def renew_source_kb(templates: list[ServiceTemplate]) -> InlineKeyboardMarkup:
+    """Template picker for renewal — `rtpl:` so it never collides with create's `tpl:`."""
+    eligible = [tpl for tpl in templates if tpl.volume_gb >= MIN_CLIENT_VOLUME_GB]
+    rows = [
+        [InlineKeyboardButton(text=tpl.name, callback_data=f"rtpl:{tpl.id}")]
+        for tpl in eligible
+    ]
+    rows.append([InlineKeyboardButton(text=L.RENEW_MANUAL, callback_data="rman")])
+    rows.append([InlineKeyboardButton(text=L.CANCEL, callback_data="rcnl")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def renew_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=L.CONFIRM, callback_data="rcfm"),
+                InlineKeyboardButton(text=L.CANCEL, callback_data="rcnl"),
+            ],
+        ]
+    )
+
+
+def renew_cancel_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=L.CANCEL, callback_data="rcnl")],
+        ]
+    )
+
+
 def client_name_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -1347,20 +1600,51 @@ def confirm_create_kb() -> InlineKeyboardMarkup:
     )
 
 
+_EXPIRY_ICONS = {EXPIRY_EXPIRED: "❌ ", EXPIRY_SOON: "⚠️ "}
+
+
+def service_button_label(
+    record: ClientRecord, usage: dict[int, tuple[int, int]] | None = None
+) -> str:
+    """Icon + email only.
+
+    The icon reflects whichever runs out first, time or volume — a service can
+    burn through its traffic weeks before its expiry date.
+
+    Never put digits here: Telegram's bidi renderer reorders numeric runs on an
+    RTL line, which is what garbled the plan listings before (commit 0d9632d).
+    Counts belong in the multi-line message above the list.
+    """
+    used, total = (usage or {}).get(record.id, (None, 0))
+    status = service_status(int(record.expiry_time or 0), used, total)
+    icon = _EXPIRY_ICONS.get(status, "")
+    email = record.email
+    short = email if len(email) <= 28 else email[:25] + "..."
+    return f"{icon}{short}"
+
+
 def service_list_kb(
-    emails: list[str], *, page: int = 0, query: str | None = None
+    records: list[ClientRecord],
+    *,
+    page: int = 0,
+    query: str | None = None,
+    usage: dict[int, tuple[int, int]] | None = None,
 ) -> InlineKeyboardMarkup:
-    total = len(emails)
+    total = len(records)
     total_pages = max(1, (total + SERVICES_PAGE_SIZE - 1) // SERVICES_PAGE_SIZE)
     page = max(0, min(page, total_pages - 1))
     start = page * SERVICES_PAGE_SIZE
-    chunk = emails[start : start + SERVICES_PAGE_SIZE]
+    chunk = records[start : start + SERVICES_PAGE_SIZE]
 
     rows: list[list[InlineKeyboardButton]] = []
-    for email in chunk:
-        short = email if len(email) <= 28 else email[:25] + "..."
+    for record in chunk:
         rows.append(
-            [InlineKeyboardButton(text=short, callback_data=f"svc:{email}")]
+            [
+                InlineKeyboardButton(
+                    text=service_button_label(record, usage),
+                    callback_data=f"svc:{record.id}",
+                )
+            ]
         )
 
     if total_pages > 1:
@@ -1402,32 +1686,32 @@ def service_list_kb(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def expiry_mode_kb(email: str) -> InlineKeyboardMarkup:
+def expiry_mode_kb(record_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=L.ADD_DAYS, callback_data=f"exp_add:{email}"
+                    text=L.ADD_DAYS, callback_data=f"exp_add:{record_id}"
                 ),
                 InlineKeyboardButton(
-                    text=L.NEW_DATE, callback_data=f"exp_date:{email}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text=L.UNLIMITED_EXPIRY, callback_data=f"exp_unlim:{email}"
+                    text=L.NEW_DATE, callback_data=f"exp_date:{record_id}"
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text=L.CANCEL, callback_data=f"exp_cancel:{email}"
+                    text=L.UNLIMITED_EXPIRY, callback_data=f"exp_unlim:{record_id}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.CANCEL, callback_data=f"exp_cancel:{record_id}"
                 ),
             ],
         ]
     )
 
 
-def add_traffic_volume_kb(email: str) -> InlineKeyboardMarkup:
+def add_traffic_volume_kb(record_id: int) -> InlineKeyboardMarkup:
     volumes = (5, 10, 20, 50)
     rows = [
         [
@@ -1449,14 +1733,14 @@ def add_traffic_volume_kb(email: str) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(
-                text=L.CANCEL, callback_data=f"traf_cancel:{email}"
+                text=L.CANCEL, callback_data=f"traf_cancel:{record_id}"
             ),
         ],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def add_traffic_confirm_kb(email: str) -> InlineKeyboardMarkup:
+def add_traffic_confirm_kb(record_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -1464,14 +1748,14 @@ def add_traffic_confirm_kb(email: str) -> InlineKeyboardMarkup:
                     text=L.CONFIRM, callback_data="traf_confirm"
                 ),
                 InlineKeyboardButton(
-                    text=L.CANCEL, callback_data=f"traf_cancel:{email}"
+                    text=L.CANCEL, callback_data=f"traf_cancel:{record_id}"
                 ),
             ],
         ]
     )
 
 
-def reduce_traffic_volume_kb(email: str) -> InlineKeyboardMarkup:
+def reduce_traffic_volume_kb(record_id: int) -> InlineKeyboardMarkup:
     volumes = (5, 10, 20, 50)
     rows = [
         [
@@ -1493,14 +1777,14 @@ def reduce_traffic_volume_kb(email: str) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(
-                text=L.CANCEL, callback_data=f"trafd_cancel:{email}"
+                text=L.CANCEL, callback_data=f"trafd_cancel:{record_id}"
             ),
         ],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def reduce_traffic_confirm_kb(email: str) -> InlineKeyboardMarkup:
+def reduce_traffic_confirm_kb(record_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -1508,44 +1792,82 @@ def reduce_traffic_confirm_kb(email: str) -> InlineKeyboardMarkup:
                     text=L.CONFIRM, callback_data="trafd_confirm"
                 ),
                 InlineKeyboardButton(
-                    text=L.CANCEL, callback_data=f"trafd_cancel:{email}"
+                    text=L.CANCEL, callback_data=f"trafd_cancel:{record_id}"
                 ),
             ],
         ]
     )
 
 
-def delete_confirm_kb(email: str) -> InlineKeyboardMarkup:
+def delete_confirm_kb(record_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text=L.YES_DELETE_SERVICE,
-                    callback_data=f"del_confirm:{email}",
+                    callback_data=f"del_confirm:{record_id}",
                 ),
                 InlineKeyboardButton(
-                    text=L.NO, callback_data=f"del_cancel:{email}"
+                    text=L.NO, callback_data=f"del_cancel:{record_id}"
                 ),
             ],
         ]
     )
 
 
-def service_edit_kb(email: str) -> InlineKeyboardMarkup:
+def service_edit_kb(record_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=L.EDIT_LIMIT_IP, callback_data=f"edit_limit:{email}"
+                    text=L.ADD_TRAFFIC, callback_data=f"traf:{record_id}"
                 ),
                 InlineKeyboardButton(
-                    text=L.EDIT_COMMENT, callback_data=f"edit_comment:{email}"
+                    text=L.REDUCE_TRAFFIC, callback_data=f"trafd:{record_id}"
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text=L.BACK, callback_data=f"edit_back:{email}"
+                    text=L.CHANGE_EXPIRY, callback_data=f"exp:{record_id}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.EDIT_NAME, callback_data=f"edit_name:{record_id}"
+                ),
+                InlineKeyboardButton(
+                    text=L.EDIT_SUB_LINK, callback_data=f"edit_sub:{record_id}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.EDIT_LIMIT_IP, callback_data=f"edit_limit:{record_id}"
+                ),
+                InlineKeyboardButton(
+                    text=L.EDIT_COMMENT, callback_data=f"edit_comment:{record_id}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.BACK, callback_data=f"edit_back:{record_id}"
                 )
+            ],
+        ]
+    )
+
+
+def sub_regen_confirm_kb(record_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.YES_REGEN_SUB, callback_data=f"sub_confirm:{record_id}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.NO, callback_data=f"edit_back_menu:{record_id}"
+                ),
             ],
         ]
     )
@@ -1556,26 +1878,6 @@ def _qr_button_label(email: str, cfg: VlessConfig, index: int) -> str:
     if len(label) > 24:
         label = label[:21] + "..."
     return f"📲 QR {label}"
-
-
-def _qr_callback_data(email: str, index: int) -> str:
-    data = f"qr:{email}:{index}"
-    if len(data) > _TELEGRAM_CALLBACK_MAX:
-        raise ValueError("callback_data too long for QR button")
-    return data
-
-
-def vless_qr_kb(email: str, configs: list[VlessConfig]) -> InlineKeyboardMarkup:
-    rows = []
-    for i, cfg in enumerate(configs):
-        try:
-            cb = _qr_callback_data(email, i)
-        except ValueError:
-            continue
-        rows.append(
-            [InlineKeyboardButton(text=_qr_button_label(email, cfg, i), callback_data=cb)]
-        )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _guest_qr_callback_data(email: str, index: int) -> str:
@@ -1595,48 +1897,40 @@ def guest_vless_qr_kb(email: str, configs: list[VlessConfig]) -> InlineKeyboardM
         rows.append(
             [InlineKeyboardButton(text=_qr_button_label(email, cfg, i), callback_data=cb)]
         )
+    rows.append(guest_my_accounts_kb().inline_keyboard[0])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def service_detail_kb(email: str, *, enabled: bool = True) -> InlineKeyboardMarkup:
+def service_detail_kb(record_id: int, *, enabled: bool = True) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text=L.LINK, callback_data=f"link:{email}"),
                 InlineKeyboardButton(
-                    text=L.TRAFFIC, callback_data=f"traffic:{email}"
+                    text=L.LINK_AND_QR, callback_data=f"linkqr:{record_id}"
+                ),
+                InlineKeyboardButton(
+                    text=L.TRAFFIC, callback_data=f"traffic:{record_id}"
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text=L.QR_CONFIG, callback_data=f"qr_menu:{email}"
+                    text=L.RENEW_SERVICE, callback_data=f"renew:{record_id}"
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text=L.CHANGE_EXPIRY, callback_data=f"exp:{email}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text=L.ADD_TRAFFIC, callback_data=f"traf:{email}"
-                ),
-                InlineKeyboardButton(
-                    text=L.REDUCE_TRAFFIC, callback_data=f"trafd:{email}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text=L.EDIT_SERVICE, callback_data=f"edit:{email}"
+                    text=L.EDIT_SERVICE, callback_data=f"edit:{record_id}"
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text=L.active_toggle_label(is_active=enabled),
-                    callback_data=f"disable:{email}" if enabled else f"enable:{email}",
+                    callback_data=(
+                        f"disable:{record_id}" if enabled else f"enable:{record_id}"
+                    ),
                 )
             ],
-            [InlineKeyboardButton(text=L.DELETE, callback_data=f"del:{email}")],
+            [InlineKeyboardButton(text=L.DELETE, callback_data=f"del:{record_id}")],
             [InlineKeyboardButton(text=L.BACK, callback_data="svc:back")],
         ]
     )

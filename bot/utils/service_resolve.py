@@ -15,6 +15,7 @@ from db.repository import ClientRepository, ResellerRepository
 from db.session import get_session_factory
 from services.panel_registry import PanelRegistry
 from services.panel_resolve import (
+    ResellerInactiveError,
     ServiceNotFoundError,
     ServicePanelUnavailableError,
     list_accessible_panel_ids,
@@ -39,7 +40,27 @@ async def resolve_service(
     reseller = await ResellerRepository(session).get(user_id)
     if not reseller:
         raise ServiceNotFoundError()
+    if not reseller.is_active:
+        raise ResellerInactiveError()
     record = await ClientRepository(session).get_for_reseller_email(user_id, email)
+    if not record:
+        raise ServiceNotFoundError()
+    xui = xui_for_record(registry, record)
+    return ServiceContext(reseller=reseller, record=record, xui=xui)
+
+
+async def resolve_service_by_id(
+    session: AsyncSession,
+    registry: PanelRegistry,
+    user_id: int,
+    record_id: int,
+) -> ServiceContext:
+    reseller = await ResellerRepository(session).get(user_id)
+    if not reseller:
+        raise ServiceNotFoundError()
+    if not reseller.is_active:
+        raise ResellerInactiveError()
+    record = await ClientRepository(session).get_for_reseller_id(user_id, record_id)
     if not record:
         raise ServiceNotFoundError()
     xui = xui_for_record(registry, record)
@@ -51,6 +72,9 @@ async def list_accessible_clients(
     registry: PanelRegistry,
     reseller_tg_id: int,
 ) -> list[ClientRecord]:
+    reseller = await ResellerRepository(session).get(reseller_tg_id)
+    if not reseller or not reseller.is_active:
+        return []
     panel_ids = list_accessible_panel_ids(registry)
     return await ClientRepository(session).list_for_reseller_on_panels(
         reseller_tg_id, panel_ids
@@ -60,7 +84,9 @@ async def list_accessible_clients(
 async def answer_resolve_callback(
     callback: CallbackQuery, exc: BaseException
 ) -> None:
-    if isinstance(exc, ServiceNotFoundError):
+    if isinstance(exc, ResellerInactiveError):
+        await callback.answer(t.NOT_RESELLER, show_alert=True)
+    elif isinstance(exc, ServiceNotFoundError):
         await callback.answer(t.SERVICE_NOT_FOUND, show_alert=True)
     elif isinstance(exc, ServicePanelUnavailableError):
         await callback.answer(
@@ -72,7 +98,9 @@ async def answer_resolve_callback(
 
 
 async def answer_resolve_message(message: Message, exc: BaseException) -> None:
-    if isinstance(exc, ServiceNotFoundError):
+    if isinstance(exc, ResellerInactiveError):
+        await message.answer(t.NOT_RESELLER)
+    elif isinstance(exc, ServiceNotFoundError):
         await message.answer(t.SERVICE_NOT_FOUND)
     elif isinstance(exc, ServicePanelUnavailableError):
         await message.answer(
@@ -90,4 +118,15 @@ async def open_service_context(
 ) -> AsyncIterator[tuple[ServiceContext, AsyncSession]]:
     async with get_session_factory()() as session:
         ctx = await resolve_service(session, registry, user_id, email)
+        yield ctx, session
+
+
+@asynccontextmanager
+async def open_service_context_by_id(
+    registry: PanelRegistry,
+    user_id: int,
+    record_id: int,
+) -> AsyncIterator[tuple[ServiceContext, AsyncSession]]:
+    async with get_session_factory()() as session:
+        ctx = await resolve_service_by_id(session, registry, user_id, record_id)
         yield ctx, session

@@ -6,7 +6,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from db.models import ClientRecord, Reseller, ResellerPanel
-from services.quota import QuotaExceeded, QuotaService
+from services.quota import (
+    MIN_SERVICE_TOTAL_BYTES,
+    QuotaExceeded,
+    QuotaService,
+    plan_remove_traffic,
+)
 from services.reseller_service import RemoveTrafficResult, ResellerService
 from xui.client import XuiError, gb_to_bytes
 
@@ -177,3 +182,92 @@ def test_remove_service_traffic_rejects_below_used() -> None:
         xui.subtract_client_traffic_bytes.assert_not_called()
 
     asyncio.run(_run())
+
+
+def test_plan_remove_traffic_to_zero_disables_with_nonzero_cap() -> None:
+    plan = plan_remove_traffic(gb_to_bytes(50), gb_to_bytes(50), 0)
+    assert plan.disable is True
+    assert plan.new_total_bytes == MIN_SERVICE_TOTAL_BYTES
+    assert plan.removed_bytes == gb_to_bytes(50) - MIN_SERVICE_TOTAL_BYTES
+
+
+def test_plan_remove_traffic_down_to_used_disables() -> None:
+    plan = plan_remove_traffic(gb_to_bytes(50), gb_to_bytes(38), gb_to_bytes(12))
+    assert plan.disable is True
+    assert plan.new_total_bytes == gb_to_bytes(12)
+    assert plan.removed_bytes == gb_to_bytes(38)
+
+
+def test_plan_remove_traffic_partial_keeps_enabled() -> None:
+    plan = plan_remove_traffic(gb_to_bytes(50), gb_to_bytes(10), gb_to_bytes(12))
+    assert plan.disable is False
+    assert plan.new_total_bytes == gb_to_bytes(40)
+    assert plan.removed_bytes == gb_to_bytes(10)
+
+
+def test_remove_service_traffic_to_zero_disables_instead_of_unlimited() -> None:
+    async def _run() -> None:
+        session = AsyncMock()
+        xui = AsyncMock()
+        xui.get_traffic = AsyncMock(return_value={"up": 0, "down": 0})
+
+        reseller = _reseller(quota_gb=500, lifetime_gb=100)
+        record = _record(allocated_gb=50)
+
+        reseller_repo = AsyncMock()
+        client_repo = AsyncMock()
+        client_repo.get_for_reseller_email = AsyncMock(return_value=record)
+
+        async def _subtract(rec: ClientRecord, delta: int) -> ClientRecord:
+            rec.allocated_bytes -= delta
+            return rec
+
+        client_repo.subtract_allocated_bytes = AsyncMock(side_effect=_subtract)
+
+        svc = ResellerService(session, xui)
+        svc.reseller_repo = reseller_repo
+        svc.client_repo = client_repo
+        svc.quota = _quota_svc(reseller)
+
+        result = await svc.remove_service_traffic(reseller, record.email, 50)
+
+        assert result.disabled is True
+        assert result.new_total_bytes == MIN_SERVICE_TOTAL_BYTES
+        xui.subtract_client_traffic_bytes.assert_not_called()
+        xui.update_client_fields.assert_awaited_once_with(
+            record.email, total_bytes=MIN_SERVICE_TOTAL_BYTES, enable=False
+        )
+        reseller_repo.subtract_lifetime_allocated.assert_awaited_once_with(
+            reseller.telegram_id, gb_to_bytes(50) - MIN_SERVICE_TOTAL_BYTES
+        )
+
+    asyncio.run(_run())
+
+
+def test_xui_set_client_total_rejects_zero() -> None:
+    from xui.client import XuiClient
+
+    client = XuiClient("http://panel.example", api_token="t")
+    with pytest.raises(XuiError):
+        asyncio.run(client.update_client_fields("a", total_bytes=0, enable=False))
+
+
+def test_xui_subtract_refuses_to_reach_zero() -> None:
+    from xui.client import XuiClient
+
+    client = XuiClient("http://panel.example", api_token="t")
+    client.get_client = AsyncMock(return_value={"email": "a", "totalGB": gb_to_bytes(5)})
+    client._request = AsyncMock()
+    with pytest.raises(XuiError):
+        asyncio.run(client.subtract_client_traffic_bytes("a", gb_to_bytes(5)))
+    client._request.assert_not_called()
+
+
+def test_xui_create_client_rejects_zero_volume() -> None:
+    from xui.client import XuiClient
+
+    client = XuiClient("http://panel.example", api_token="t")
+    client._request = AsyncMock()
+    with pytest.raises(XuiError):
+        asyncio.run(client.create_client("a", 0, [1]))
+    client._request.assert_not_called()

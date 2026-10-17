@@ -103,6 +103,18 @@ def _build_client_update_payload(
     return body
 
 
+def _coerce_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def generate_sub_id() -> str:
+    """Random subscription id (same shape the panel gets at create time)."""
+    return uuid.uuid4().hex[:16]
+
+
 def build_subscription_url(public_base: str, sub_id: str) -> str:
     base = public_base.rstrip("/")
     return f"{base}/{sub_id.strip()}"
@@ -110,6 +122,10 @@ def build_subscription_url(public_base: str, sub_id: str) -> str:
 
 class XuiError(Exception):
     pass
+
+
+class XuiApiError(XuiError):
+    """The panel answered with success=false (a definitive answer, not retried)."""
 
 
 def _is_client_not_found(err: XuiError) -> bool:
@@ -210,12 +226,38 @@ class XuiClient:
         *,
         json: dict | list | None = None,
         params: dict | None = None,
+        retry: bool = True,
+    ) -> Any:
+        """Call the panel API; every failure surfaces as XuiError.
+
+        retry=False is for non-idempotent calls (add client, bulkAdjust, delete):
+        if the panel applied the change but the response was lost, a retry would
+        apply it twice.
+        """
+        try:
+            return await self._request_inner(
+                method, path, json=json, params=params, retry=retry
+            )
+        except XuiError:
+            raise
+        except (httpx.HTTPError, ValueError) as e:
+            raise XuiError(f"خطای ارتباط با پنل: {e}") from e
+
+    async def _request_inner(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: dict | list | None,
+        params: dict | None,
+        retry: bool,
     ) -> Any:
         await self.ensure_authenticated()
         client = await self._get_client()
         last_err: Exception | None = None
+        attempts = self.max_retries if retry else 1
 
-        for attempt in range(1, self.max_retries + 1):
+        for attempt in range(1, attempts + 1):
             try:
                 r = await client.request(
                     method,
@@ -232,7 +274,7 @@ class XuiClient:
                 if r.status_code == 403:
                     raise XuiError("Forbidden — check API token or CSRF")
                 if not r.content:
-                    if attempt < self.max_retries:
+                    if attempt < attempts:
                         await asyncio.sleep(0.5 * attempt)
                         continue
                     raise XuiError("Panel returned empty response")
@@ -243,11 +285,23 @@ class XuiClient:
                     data = {"success": r.is_success, "raw": r.text}
 
                 if isinstance(data, dict) and data.get("success") is False:
-                    raise XuiError(data.get("msg", "Panel API error"))
+                    msg = data.get("msg", "Panel API error")
+                    # The panel's own message carries no context ("record not
+                    # found" says nothing about which record), so pin the call.
+                    logger.warning(
+                        "Panel rejected %s %s: %s (payload=%s)",
+                        method,
+                        path,
+                        msg,
+                        json,
+                    )
+                    raise XuiApiError(msg)
                 return data
+            except XuiApiError:
+                raise
             except (httpx.HTTPError, XuiError) as e:
                 last_err = e
-                if attempt < self.max_retries:
+                if attempt < attempts:
                     await asyncio.sleep(0.5 * attempt)
                     continue
                 raise
@@ -264,6 +318,39 @@ class XuiClient:
             flow or "(empty)",
         )
         return flow
+
+    async def prepare_client_inbounds(self, inbound_ids: list[int]) -> str:
+        """Check the inbounds exist on the panel, and resolve the client flow.
+
+        Both need the inbound list, so they share one request. Without the
+        existence check the panel just answers "record not found" on create,
+        which says nothing about which inbound is missing — the failure mode
+        that follows deleting an inbound in 3x-ui while reseller rows still
+        reference it.
+        """
+        if not inbound_ids:
+            return ""
+        inbounds = await self.list_inbounds()
+        live: set[int] = set()
+        for ib in inbounds:
+            try:
+                live.add(int(ib.get("id", ib.get("inboundId"))))
+            except (TypeError, ValueError):
+                continue
+        missing = sorted(set(inbound_ids) - live)
+        if missing:
+            logger.warning(
+                "Inbounds %s requested but panel only has %s",
+                missing,
+                sorted(live),
+            )
+            ids = "، ".join(str(i) for i in missing)
+            raise XuiError(
+                f"اینباند {ids} روی پنل وجود ندارد. با ادمین تماس بگیرید."
+            )
+        if not self.auto_vision_flow:
+            return ""
+        return resolve_flow_for_inbound_ids(inbounds, inbound_ids)
 
     async def ensure_client_group(self, name: str) -> None:
         group = name.strip()
@@ -301,17 +388,21 @@ class XuiClient:
         *,
         expiry_days: int = 0,
         limit_ip: int = 0,
-        flow: str = "",
+        flow: str | None = None,
         group: str = "",
     ) -> tuple[dict[str, Any], str]:
-        if flow == "":
+        if gb_to_bytes(volume_gb) <= 0:
+            # totalGB=0 means unlimited on 3x-ui; never create such a client.
+            raise XuiError("حجم سرویس باید بزرگ‌تر از صفر باشد.")
+        # None = resolve it here; "" = caller resolved it and there is no flow.
+        if flow is None:
             flow = await self.resolve_client_flow(inbound_ids)
 
         expiry_ms = 0
         if expiry_days > 0:
             expiry_ms = int((time.time() + expiry_days * 86400) * 1000)
 
-        sub_id = uuid.uuid4().hex[:16]
+        sub_id = generate_sub_id()
         group_name = group.strip()
         if group_name:
             await self.ensure_client_group(group_name)
@@ -332,6 +423,7 @@ class XuiClient:
             "POST",
             "/panel/api/clients/add",
             json=payload.model_dump(),
+            retry=False,
         )
         if group.strip():
             try:
@@ -346,7 +438,7 @@ class XuiClient:
 
     async def delete_client(self, email: str) -> dict[str, Any]:
         return await self._request(
-            "POST", f"/panel/api/clients/del/{quote(email, safe='')}"
+            "POST", f"/panel/api/clients/del/{quote(email, safe='')}", retry=False
         )
 
     async def get_traffic(self, email: str) -> dict[str, Any]:
@@ -398,15 +490,33 @@ class XuiClient:
         *,
         limit_ip: int | None = None,
         comment: str | None = None,
+        total_bytes: int | None = None,
+        expiry_ms: int | None = None,
+        enable: bool | None = None,
+        new_email: str | None = None,
+        sub_id: str | None = None,
     ) -> dict[str, Any]:
-        if limit_ip is None and comment is None:
-            raise XuiError("هیچ فیلدی برای به‌روزرسانی مشخص نشده.")
-        client = await self._get_client_dict_for_update(email)
         overrides: dict[str, Any] = {}
         if limit_ip is not None:
             overrides["limitIp"] = limit_ip
         if comment is not None:
             overrides["comment"] = comment
+        if total_bytes is not None:
+            if total_bytes < 1:
+                # totalGB=0 means unlimited on 3x-ui.
+                raise XuiError("سقف ترافیک باید بزرگ‌تر از صفر باشد.")
+            overrides["totalGB"] = int(total_bytes)
+        if expiry_ms is not None:
+            overrides["expiryTime"] = expiry_ms
+        if enable is not None:
+            overrides["enable"] = enable
+        if new_email is not None:
+            overrides["email"] = new_email
+        if sub_id is not None:
+            overrides["subId"] = sub_id
+        if not overrides:
+            raise XuiError("هیچ فیلدی برای به‌روزرسانی مشخص نشده.")
+        client = await self._get_client_dict_for_update(email)
         payload = _build_client_update_payload(client, **overrides)
         return await self._request(
             "POST",
@@ -421,6 +531,7 @@ class XuiClient:
             "POST",
             "/panel/api/clients/bulkAdjust",
             json={"emails": [email], "addDays": days, "addBytes": 0},
+            retry=False,
         )
 
     async def add_client_traffic_bytes(
@@ -432,6 +543,7 @@ class XuiClient:
             "POST",
             "/panel/api/clients/bulkAdjust",
             json={"emails": [email], "addDays": 0, "addBytes": add_bytes},
+            retry=False,
         )
 
     async def subtract_client_traffic_bytes(
@@ -439,10 +551,19 @@ class XuiClient:
     ) -> dict[str, Any]:
         if subtract_bytes < 1:
             raise XuiError("حجم کاهش باید بزرگ‌تر از صفر باشد.")
+        client = await self._get_client_dict_for_update(email)
+        try:
+            current_total = int(client.get("totalGB", client.get("total_gb", 0)) or 0)
+        except (TypeError, ValueError):
+            current_total = 0
+        if current_total - subtract_bytes < 1:
+            # Reaching 0 would make the client unlimited on 3x-ui.
+            raise XuiError("سقف جدید ترافیک باید بزرگ‌تر از صفر باشد.")
         data = await self._request(
             "POST",
             "/panel/api/clients/bulkAdjust",
             json={"emails": [email], "addDays": 0, "addBytes": -subtract_bytes},
+            retry=False,
         )
         obj = data.get("obj", data) if isinstance(data, dict) else data
         if isinstance(obj, dict):
@@ -550,6 +671,41 @@ class XuiClient:
             vless_configs=vless_configs,
             subscription_links=subscription_links,
         )
+
+    async def client_usage_map(self) -> dict[str, tuple[int, int]] | None:
+        """`email -> (used_bytes, total_bytes)` for every client, in one request.
+
+        The inbound list embeds a `clientStats` array per inbound, so usage for
+        a whole panel costs a single call. Fetching it per client is what made
+        the usage-alert loop overwhelm the panel.
+
+        Returns None when the panel reports no `clientStats` at all, which is
+        different from every client having zero usage: the caller must fall back
+        to time-only status rather than treat everyone as idle.
+        """
+        inbounds = await self.list_inbounds()
+        usage: dict[str, tuple[int, int]] = {}
+        seen_stats = False
+        for inbound in inbounds:
+            stats = inbound.get("clientStats")
+            if not isinstance(stats, list):
+                continue
+            seen_stats = True
+            for row in stats:
+                if not isinstance(row, dict):
+                    continue
+                email = str(row.get("email") or "").strip()
+                if not email:
+                    continue
+                up = _coerce_int(row.get("up"))
+                down = _coerce_int(row.get("down"))
+                # total == 0 on the panel means "unlimited", not "no quota";
+                # the caller substitutes the allocation we recorded.
+                usage[email] = (up + down, _coerce_int(row.get("total")))
+        if not seen_stats:
+            logger.warning("Panel returned no clientStats; usage unavailable")
+            return None
+        return usage
 
     async def list_inbounds(self) -> list[dict[str, Any]]:
         data = await self._request("GET", "/panel/api/inbounds/list")

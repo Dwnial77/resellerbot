@@ -1,5 +1,8 @@
 """Admin hub and wizard for multiple 3x-ui panels."""
 
+import logging
+
+import httpx
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -10,6 +13,8 @@ from bot.keyboards import labels as btn
 from bot.utils.panel_url import InvalidPanelUrlError, normalize_http_url, normalize_sub_public_url
 from bot.keyboards.common import (
     panel_admin_hub_kb,
+    panel_bulk_confirm_kb,
+    panel_bulk_inbounds_kb,
     panel_delete_confirm_kb,
     panel_edit_menu_kb,
     panel_edit_sub_kb,
@@ -21,17 +26,23 @@ from bot.states import AddPanelStates, EditPanelStates
 from bot.texts import fa as t
 from db.repository import PanelRepository
 from db.session import get_session_factory
+from services.bulk_inbounds import (
+    apply_bulk_inbound,
+    count_resellers_with_inbound,
+    diagnose_panel_inbounds,
+    orphan_inbound_ids,
+)
 from services.panel_edit import (
     PanelConnectionError,
-    PanelNotFoundError,
     apply_panel_api_token,
     apply_panel_base_url,
     apply_panel_name,
     apply_panel_sub_public_url,
 )
 from services.panel_registry import PanelNotFoundError, PanelRegistry
-from xui.client import XuiClient
+from xui.client import XuiClient, XuiError
 
+logger = logging.getLogger(__name__)
 router = Router()
 
 
@@ -442,6 +453,250 @@ async def panel_toggle(
     await callback.answer()
 
 
+class _PanelUnreachable(Exception):
+    """Panel could not be reached — distinct from 'the data looks wrong'."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+    async def message(self, panel_id: int) -> str:
+        async with get_session_factory()() as session:
+            panel = await PanelRepository(session).get(panel_id)
+        name = panel.name if panel else f"#{panel_id}"
+        return t.PANEL_UNREACHABLE.format(panel_name=name, reason=self.reason)
+
+
+def _network_reason(exc: Exception) -> str:
+    if isinstance(exc, httpx.ConnectError):
+        return "اتصال برقرار نشد (DNS یا شبکه)."
+    if isinstance(exc, httpx.TimeoutException):
+        return "پاسخی از پنل دریافت نشد (timeout)."
+    return str(exc)[:150]
+
+
+async def _live_inbounds(
+    panel_registry: PanelRegistry, panel_id: int
+) -> list[dict]:
+    """Inbounds straight from the panel.
+
+    Raises `_PanelUnreachable` rather than returning an empty list, so callers
+    never mistake a dead panel for a panel with no inbounds — the difference
+    matters when deciding whether reseller rows are stale.
+    """
+    try:
+        xui = panel_registry.get_client(panel_id)
+        return await xui.list_inbounds()
+    except PanelNotFoundError as e:
+        raise _PanelUnreachable(str(e)) from e
+    except (XuiError, httpx.HTTPError) as e:
+        logger.warning("Panel #%s inbound fetch failed: %r", panel_id, e)
+        raise _PanelUnreachable(_network_reason(e)) from e
+
+
+def _inbound_ids(inbounds: list[dict]) -> set[int]:
+    out: set[int] = set()
+    for ib in inbounds:
+        try:
+            out.add(int(ib.get("id", ib.get("inboundId"))))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+@router.callback_query(F.data == "pnl:noop")
+async def panel_noop(callback: CallbackQuery) -> None:
+    await callback.answer()
+
+
+@router.callback_query(F.data.regexp(r"^pnl:bulk:\d+$"))
+async def panel_bulk_pick_inbound(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
+    if not _is_admin(callback.from_user.id if callback.from_user else None):
+        return
+    if not callback.data or not callback.message:
+        await callback.answer()
+        return
+    panel_id = int(callback.data.split(":", 2)[2])
+    try:
+        inbounds = await _live_inbounds(panel_registry, panel_id)
+    except _PanelUnreachable as e:
+        await callback.answer(await e.message(panel_id), show_alert=True)
+        return
+    if not inbounds:
+        await callback.answer("اینبندی یافت نشد.", show_alert=True)
+        return
+
+    live = _inbound_ids(inbounds)
+    async with get_session_factory()() as session:
+        panel = await PanelRepository(session).get(panel_id)
+        orphans = await orphan_inbound_ids(session, panel_id, live)
+        coverage = {
+            ib_id: await count_resellers_with_inbound(session, panel_id, ib_id)
+            for ib_id in live | set(orphans)
+        }
+    total = next(iter(coverage.values()), (0, 0))[1]
+    if total == 0:
+        await callback.answer(t.BULK_INBOUND_NO_RESELLERS, show_alert=True)
+        return
+
+    text = t.BULK_INBOUND_PICK.format(
+        panel_name=panel.name if panel else f"#{panel_id}", total=total
+    )
+    if orphans:
+        text += t.BULK_INBOUND_ORPHAN_NOTE.format(
+            ids=", ".join(str(i) for i in orphans)
+        )
+    await callback.message.edit_text(  # type: ignore[union-attr]
+        text,
+        reply_markup=panel_bulk_inbounds_kb(panel_id, inbounds, coverage, orphans),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.regexp(r"^pnl:bulk:pick:\d+:\d+$"))
+async def panel_bulk_confirm(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
+    if not _is_admin(callback.from_user.id if callback.from_user else None):
+        return
+    if not callback.data or not callback.message:
+        await callback.answer()
+        return
+    _, _, _, panel_id_s, inbound_id_s = callback.data.split(":")
+    panel_id, inbound_id = int(panel_id_s), int(inbound_id_s)
+
+    try:
+        live = _inbound_ids(await _live_inbounds(panel_registry, panel_id))
+    except _PanelUnreachable as e:
+        await callback.answer(await e.message(panel_id), show_alert=True)
+        return
+
+    async with get_session_factory()() as session:
+        panel = await PanelRepository(session).get(panel_id)
+        have, total = await count_resellers_with_inbound(
+            session, panel_id, inbound_id
+        )
+    panel_name = panel.name if panel else f"#{panel_id}"
+    # An inbound the panel no longer has can only be cleared, never handed out.
+    # Otherwise: everyone already has it -> remove; anyone missing it -> add.
+    is_orphan = inbound_id not in live
+    enable = False if is_orphan else have < total
+    if is_orphan:
+        text = t.BULK_INBOUND_CONFIRM_ORPHAN.format(
+            inbound_id=inbound_id, panel_name=panel_name, have=have
+        )
+    elif enable:
+        text = t.BULK_INBOUND_CONFIRM_ADD.format(
+            inbound_id=inbound_id,
+            panel_name=panel_name,
+            have=have,
+            missing=total - have,
+        )
+    else:
+        text = t.BULK_INBOUND_CONFIRM_REMOVE.format(
+            inbound_id=inbound_id, panel_name=panel_name, have=have
+        )
+    await callback.message.edit_text(  # type: ignore[union-attr]
+        text,
+        reply_markup=panel_bulk_confirm_kb(panel_id, inbound_id, enable=enable),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.regexp(r"^pnl:bulk:go:\d+:\d+:(on|off)$"))
+async def panel_bulk_apply(callback: CallbackQuery) -> None:
+    if not _is_admin(callback.from_user.id if callback.from_user else None):
+        return
+    if not callback.data or not callback.message:
+        await callback.answer()
+        return
+    _, _, _, panel_id_s, inbound_id_s, action = callback.data.split(":")
+    panel_id, inbound_id = int(panel_id_s), int(inbound_id_s)
+    enable = action == "on"
+
+    async with get_session_factory()() as session:
+        result = await apply_bulk_inbound(
+            session, panel_id, inbound_id, enable=enable
+        )
+
+    title = (
+        t.BULK_INBOUND_TITLE_ADD if enable else t.BULK_INBOUND_TITLE_REMOVE
+    ).format(inbound_id=inbound_id)
+    lines = [
+        t.BULK_INBOUND_DONE.format(
+            title=title,
+            changed=result.changed,
+            skipped_count=len(result.skipped),
+        )
+    ]
+    if result.skipped:
+        lines.append(t.BULK_INBOUND_SKIPPED_HEADER)
+        for label, reason in result.skipped[:15]:
+            lines.append(f"• {label}\n  {reason}")
+    await callback.message.edit_text(  # type: ignore[union-attr]
+        "\n".join(lines),
+        reply_markup=panel_view_kb(panel_id, is_active=True),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("pnl:health:"))
+async def panel_inbound_health(
+    callback: CallbackQuery, panel_registry: PanelRegistry
+) -> None:
+    if not _is_admin(callback.from_user.id if callback.from_user else None):
+        return
+    if not callback.data or not callback.message:
+        await callback.answer()
+        return
+    panel_id = int(callback.data.split(":", 2)[2])
+    try:
+        inbounds = await _live_inbounds(panel_registry, panel_id)
+    except _PanelUnreachable as e:
+        # Never report resellers as broken when the panel itself is down.
+        await callback.message.answer(await e.message(panel_id))  # type: ignore[union-attr]
+        await callback.answer()
+        return
+
+    live = _inbound_ids(inbounds)
+    async with get_session_factory()() as session:
+        panel = await PanelRepository(session).get(panel_id)
+        problems = await diagnose_panel_inbounds(session, panel_id, live)
+
+    lines = [
+        t.INBOUND_HEALTH_HEADER.format(
+            panel_name=panel.name if panel else f"#{panel_id}",
+            live=", ".join(str(i) for i in sorted(live)) or "—",
+        )
+    ]
+    if not problems:
+        lines.append(t.INBOUND_HEALTH_OK)
+    else:
+        lines.append(t.INBOUND_HEALTH_PROBLEM_HEADER)
+        for d in problems[:20]:
+            lines.append(f"\n{d.label}")
+            if d.missing_allowed:
+                lines.append(
+                    t.INBOUND_HEALTH_MISSING_ALLOWED.format(
+                        ids=", ".join(str(i) for i in d.missing_allowed)
+                    )
+                )
+            if d.missing_attach:
+                lines.append(
+                    t.INBOUND_HEALTH_MISSING_ATTACH.format(
+                        ids=", ".join(str(i) for i in d.missing_attach)
+                    )
+                )
+            if d.fully_blocked:
+                lines.append(t.INBOUND_HEALTH_BLOCKED)
+        lines.append(t.INBOUND_HEALTH_HINT)
+
+    await callback.message.answer("\n".join(lines))  # type: ignore[union-attr]
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("pnl:inbounds:"))
 async def panel_list_inbounds(
     callback: CallbackQuery, panel_registry: PanelRegistry
@@ -452,10 +707,9 @@ async def panel_list_inbounds(
         return
     panel_id = int(callback.data.split(":", 2)[2])
     try:
-        xui = panel_registry.get_client(panel_id)
-        inbounds = await xui.list_inbounds()
-    except (PanelNotFoundError, Exception) as e:
-        await callback.answer(str(e)[:200], show_alert=True)
+        inbounds = await _live_inbounds(panel_registry, panel_id)
+    except _PanelUnreachable as e:
+        await callback.answer(await e.message(panel_id), show_alert=True)
         return
     if not inbounds:
         await callback.answer("اینبندی یافت نشد.", show_alert=True)

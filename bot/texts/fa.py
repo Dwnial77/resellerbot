@@ -77,6 +77,7 @@ PANEL_INACTIVE_FOR_RESELLER = (
     "پنل {panel_name} (#{panel_id}) غیرفعال است. ابتدا پنل را فعال کنید."
 )
 SERVICE_NOT_FOUND = "سرویس یافت نشد."
+ACTION_EXPIRED = "این دکمه منقضی شده؛ لطفاً دوباره از منوی سرویس شروع کنید."
 SERVICE_PANEL_UNAVAILABLE = (
     "پنل سرویس (#{panel_id}) در دسترس نیست (غیرفعال یا قطع). با ادمین تماس بگیرید."
 )
@@ -87,6 +88,73 @@ SERVICE_LIST_HEADER = "سرویس‌های شما ({start}–{end} از {total})
 SEARCH_SERVICE_PROMPT = "بخشی از نام/ایمیل سرویس مورد نظر را ارسال کنید:"
 SERVICE_SEARCH_HEADER = "نتایج جستجو برای «{query}» ({start}–{end} از {total}):"
 SEARCH_NO_RESULTS = "هیچ سرویسی با «{query}» یافت نشد."
+SERVICE_LIST_EXPIRED_COUNT = "❌ تمام‌شده (حجم یا زمان): {count}"
+SERVICE_LIST_SOON_COUNT = "⚠️ رو به اتمام: {count}"
+SERVICE_NOTE_VOLUME_GONE = "\n❌ حجم این سرویس تمام شده است."
+SERVICE_NOTE_TIME_GONE = "\n❌ مدت این سرویس تمام شده است."
+SERVICE_NOTE_VOLUME_LOW = "\n⚠️ حجم این سرویس رو به اتمام است."
+SERVICE_NOTE_TIME_LOW = "\n⚠️ مدت این سرویس رو به اتمام است."
+SERVICE_LIST_PICK = "یکی را انتخاب کنید:"
+
+BULK_INBOUND_PICK = (
+    "اینباند گروهی — پنل {panel_name}\n"
+    "ریسلرهای این پنل: {total}\n\n"
+    "عدد کنار هر اینباند یعنی چند ریسلر الان آن را دارند.\n"
+    "یکی را انتخاب کنید:"
+)
+BULK_INBOUND_NO_RESELLERS = "هیچ ریسلری به این پنل تخصیص داده نشده."
+BULK_INBOUND_ORPHAN_NOTE = (
+    "\n\n⚠️ اینباندهای ناموجود روی پنل: {ids}\n"
+    "این‌ها با علامت ⚠️ در لیست پایین آمده‌اند و باعث خطای «record not found» "
+    "هنگام ساخت سرویس می‌شوند. فقط قابل حذف‌اند."
+)
+BULK_INBOUND_CONFIRM_ORPHAN = (
+    "حذف اینباند #{inbound_id} از همهٔ ریسلرهای پنل {panel_name}؟\n\n"
+    "این اینباند روی پنل وجود ندارد و ارجاع به آن باعث خطای "
+    "«record not found» هنگام ساخت سرویس می‌شود.\n\n"
+    "الان به آن ارجاع می‌دهند: {have}\n\n"
+    "⚠️ ریسلری که این تنها اینباندش باشد رد می‌شود و دست‌نخورده می‌ماند؛ "
+    "برای او اول یک اینباند سالم اضافه کنید."
+)
+BULK_INBOUND_CONFIRM_ADD = (
+    "افزودن اینباند #{inbound_id} به همهٔ ریسلرهای پنل {panel_name}؟\n\n"
+    "الان دارند: {have}\n"
+    "اضافه می‌شود به: {missing}\n\n"
+    "به هر دو لیست «مجاز» و «متصل» اضافه می‌شود."
+)
+BULK_INBOUND_CONFIRM_REMOVE = (
+    "حذف اینباند #{inbound_id} از همهٔ ریسلرهای پنل {panel_name}؟\n\n"
+    "الان دارند: {have}\n\n"
+    "⚠️ ریسلری که این تنها اینباندش باشد رد می‌شود و دست‌نخورده می‌ماند.\n"
+    "برای جایگزینی، اول اینباند جدید را به همه اضافه کنید."
+)
+BULK_INBOUND_DONE = (
+    "{title}\n"
+    "به‌روزرسانی شد: {changed}\n"
+    "رد شد: {skipped_count}"
+)
+BULK_INBOUND_SKIPPED_HEADER = "\nرد شده‌ها:"
+BULK_INBOUND_TITLE_ADD = "اینباند #{inbound_id} به ریسلرها اضافه شد."
+BULK_INBOUND_TITLE_REMOVE = "اینباند #{inbound_id} از ریسلرها حذف شد."
+
+INBOUND_HEALTH_HEADER = (
+    "بررسی سلامت اینباندها — پنل {panel_name}\n"
+    "اینباندهای زنده: {live}"
+)
+INBOUND_HEALTH_OK = "\n✅ همهٔ ریسلرها سالم‌اند."
+INBOUND_HEALTH_PROBLEM_HEADER = "\n⚠️ ریسلرهایی با اینباند ناموجود:"
+INBOUND_HEALTH_BLOCKED = "  ❌ هیچ اینباند سالمی ندارد — نمی‌تواند سرویس بسازد"
+INBOUND_HEALTH_MISSING_ALLOWED = "  مجاز، ناموجود: {ids}"
+INBOUND_HEALTH_MISSING_ATTACH = "  متصل، ناموجود: {ids}"
+INBOUND_HEALTH_HINT = (
+    "\nبرای اصلاح: «اینباند گروهی» → اینباند درست را به همه اضافه کنید، "
+    "بعد اینباند ناموجود را حذف کنید."
+)
+PANEL_UNREACHABLE = (
+    "پنل {panel_name} در دسترس نیست.\n"
+    "{reason}\n\n"
+    "آدرس پنل و اتصال شبکه سرور را بررسی کنید."
+)
 
 PANEL_LIST_HEADER = "پنل‌های 3x-ui:"
 PANEL_LIST_EMPTY = "پنلی ثبت نشده است."
@@ -193,31 +261,26 @@ RESELLER_ENABLED = "ریسلر {label} فعال شد."
 
 RESELLER_LIST_HEADER = "ریسلرها:"
 RESELLER_LIST_EMPTY = "ریسلری ثبت نشده است."
-REPORT_HUB_HEADER = "گزارش‌گیری — ریسلر را انتخاب کنید:"
-REPORT_HUB_EMPTY = "ریسلری برای گزارش وجود ندارد."
-REPORT_HUB_HINT = "روی هر ریسلر بزنید تا گزارش تعداد سرویس و تخصیص حجم نمایش داده شود."
-RESELLER_REPORT = (
-    "📈 گزارش ریسلر: {label}\n"
-    "وضعیت: {status}\n"
-    "پنل پیش‌فرض: {panel_name} (#{panel_id})\n"
-    "سهمیه کل: {quota_gb} GB | مصرف: {lifetime_gb} GB | باقی: {remaining_gb} GB\n"
-    "{panels_detail}\n"
-    "سرویس کل: {client_count}"
-)
-RESELLER_REPORT_PANEL_LINE = (
-    "• {panel_name}: {client_count} سرویس | "
-    "تخصیص فعال: {active_gb} GB"
-)
 REPORT_UPDATED = "گزارش بروزرسانی شد."
 RESELLER_HUB_HINT = (
-    "روی هر ریسلر بزنید برای مدیریت؛ «افزودن ریسلر» برای ویزارد ثبت."
+    "روی هر ریسلر بزنید برای مدیریت و گزارش؛ «افزودن ریسلر» برای ویزارد ثبت."
 )
 RESELLER_VIEW_DETAIL = (
     "ریسلر: {label}\n"
     "وضعیت: {status}\n"
     "پنل پیش‌فرض: {panel_name} (#{panel_id})\n"
-    "{panels_summary}\n"
-    "سرویس کل: {client_count}"
+    "\n"
+    "سهمیه کل: {quota_gb} GB\n"
+    "مصرف سهمیه: {lifetime_gb} GB\n"
+    "باقی‌مانده: {remaining_gb} GB\n"
+    "سرویس کل: {client_count}\n"
+    "\n"
+    "{panels_summary}"
+)
+RESELLER_VIEW_PANEL_LINE = (
+    "• {panel_name}\n"
+    "  سرویس: {client_count}\n"
+    "  تخصیص فعال: {active_gb} GB"
 )
 RESELLER_PANELS_HEADER = "پنل‌های {label}:"
 RESELLER_PANEL_VIEW = (
@@ -422,8 +485,31 @@ PLAN_WIZARD_CONFIRM = (
     "ثبت شود؟"
 )
 PLAN_WIZARD_CANCELLED = "افزودن پلن لغو شد."
+PLAN_VOLUME_TOO_LOW = "حجم پلن باید حداقل {min_gb} GB باشد (پلن‌های کوچک‌تر به مشتری نمایش داده نمی‌شوند)."
+PLAN_DETAIL = (
+    "پلن #{id} — {name}\n"
+    "وضعیت: {status}\n"
+    "حجم: {volume_gb} GB\n"
+    "مدت: {expiry_label}\n"
+    "قیمت: {price} تومان\n\n"
+    "ℹ️ تغییرات فقط روی سفارش‌های جدید اثر دارد؛ سفارش‌های ثبت‌شده با شرایط زمان ثبت تحویل می‌شوند."
+)
+PLAN_EDIT_PROMPTS = {
+    "name": "نام جدید پلن را بنویسید:",
+    "price": "قیمت جدید (تومان) را بنویسید (مثلاً 150000):",
+    "volume": "حجم جدید (GB) را بنویسید (حداقل {min_gb}):",
+    "days": "مدت جدید (روز) را بنویسید (0 = نامحدود):",
+}
+PLAN_EDIT_SAVED = "✅ پلن به‌روزرسانی شد."
+PLAN_MOVE_EDGE = "این پلن در ابتدا/انتهای لیست است."
 
-GUEST_WELCOME = "به ربات خوش آمدید!\nبرای خرید اکانت روی «🛒 خرید اکانت» بزنید."
+GUEST_WELCOME = (
+    "سلام! 👋 به ربات فروش اکانت خوش آمدید.\n\n"
+    "۱. «🛒 خرید اکانت» را بزنید و پلن را انتخاب کنید\n"
+    "۲. مبلغ را کارت‌به‌کارت کنید و رسید را بفرستید\n"
+    "۳. بعد از تأیید، اکانت برایتان ارسال می‌شود\n\n"
+    "مشاهده‌ی مصرف، لینک‌ها و تمدید: «👤 اکانت‌های من»"
+)
 ADMIN_GUEST_PREVIEW_NOTE = (
     "این پیش‌نمایش حالت میهمانه (همون منویی که کاربر معمولی می‌بینه).\n"
     "⚠️ هر کاری اینجا انجام بدی واقعی ثبت میشه (مثلاً سفارش خرید واقعی).\n"
@@ -431,30 +517,70 @@ ADMIN_GUEST_PREVIEW_NOTE = (
 )
 GUEST_SALES_DISABLED = "فروش مستقیم فعلاً فعال نیست. با ادمین تماس بگیرید."
 GUEST_NO_PLANS = "فعلاً پلنی برای خرید موجود نیست. بعداً امتحان کنید."
-GUEST_PLAN_LIST_HEADER = "🛒 پلن‌های موجود:\nیکی را انتخاب کنید:"
-GUEST_PAYMENT_PROMPT = (
-    "پلن انتخابی: {name}\n"
-    "حجم: {volume_gb} GB\n"
-    "انقضا: {expiry_label}\n"
-    "قیمت: {price_toman} تومان\n\n"
-    "مبلغ {price_toman} تومان را به کارت زیر واریز کنید:\n"
-    "شماره کارت: `{card_number}`\n"
-    "به‌نام: {card_holder}\n\n"
-    "سپس رسید پرداخت را (عکس یا متن) ارسال کنید."
+GUEST_PLAN_LIST_HEADER = "🛒 پلن‌های موجود:"
+GUEST_RENEW_PLAN_HEADER = "♻️ تمدید اکانت #{record_id}\nپلن تمدید را انتخاب کنید:"
+# Each line starts with RLM (U+200F) and uses Persian digits: keeps RTL order
+# in Telegram even when a plan name is an emoji or Latin text.
+GUEST_PLAN_LINE = (
+    "\n\n\u200f▫️ {name}"
+    "\n\u200f      حجم: {volume}"
+    "\n\u200f      مدت: {expiry}"
+    "\n\u200f      قیمت: {price} تومان"
 )
+GUEST_PLAN_LIST_FOOTER = "\n\nیکی از پلن‌ها را انتخاب کنید 👇"
+GUEST_PAYMENT_PROMPT = (
+    "🧾 پیش‌فاکتور{renew_line}\n\n"
+    "\u200fپلن: {name}\n"
+    "\u200fحجم: {volume}\n"
+    "\u200fمدت: {expiry}\n"
+    "\u200f💰 مبلغ قابل پرداخت: {price} تومان\n\n"
+    "💳 شماره کارت: `{card_number}`\n"
+    "👤 به‌نام: {card_holder}\n\n"
+    "بعد از واریز، *عکس رسید* یا متن پیامک واریز را همین‌جا بفرستید."
+)
+GUEST_PAYMENT_RENEW_LINE = " — تمدید اکانت #{record_id}"
+GUEST_PAYMENT_CANCELLED = "خرید لغو شد. هر وقت خواستید دوباره از منو شروع کنید."
 GUEST_ORDER_SUBMITTED = (
-    "سفارش شما ثبت شد و برای بررسی برای ادمین ارسال شد.\n"
-    "پس از تأیید، اکانت شما ارسال می‌شود."
+    "✅ سفارش #{order_id} ثبت شد و برای بررسی ارسال شد.\n"
+    "پس از تأیید ادمین، نتیجه همین‌جا برایتان ارسال می‌شود.\n"
+    "وضعیت سفارش: «📦 سفارش‌های من»"
 )
 GUEST_ORDER_ADMIN_NOTIFY = (
-    "🛒 سفارش جدید #{order_id}\n"
+    "{kind_label} #{order_id}\n"
     "کاربر: {telegram_id}{username}\n"
     "پلن: {name}\n"
     "حجم: {volume_gb} GB\n"
     "انقضا: {expiry_label}\n"
-    "قیمت: {price_toman} تومان"
+    "قیمت: {price} تومان"
+    "{receipt_line}"
 )
+GUEST_ORDER_RECEIPT_TEXT_LINE = "\n\n🧾 متن رسید:\n{receipt}"
+GUEST_ORDER_KIND_NEW = "🛒 سفارش جدید"
+GUEST_ORDER_KIND_RENEW = "♻️ تمدید اکانت {email} — سفارش"
 GUEST_ORDER_APPROVED_ADMIN = "✅ سفارش #{order_id} تحویل داده شد به {telegram_id}."
+GUEST_RENEWED = (
+    "♻️ اکانت شما تمدید شد!\n\n"
+    "اکانت: {email}\n"
+    "حجم: {total} (مصرف صفر شد)\n"
+    "انقضا: {expiry}\n\n"
+    "لینک‌ها تغییری نکرده‌اند و همان کانفیگ قبلی کار می‌کند."
+)
+GUEST_RENEW_RESET_FAILED = (
+    "تمدید انجام شد اما ریست مصرف {email} در پنل ناموفق بود؛ "
+    "مصرف را دستی از پنل ریست کنید."
+)
+GUEST_ACCOUNTS_HEADER = "👤 اکانت‌های شما:\nبرای جزئیات، مصرف، لینک یا تمدید روی اکانت بزنید."
+GUEST_ACCOUNTS_EMPTY = "هنوز اکانتی ندارید. از «🛒 خرید اکانت» شروع کنید."
+GUEST_ACCOUNT_DETAIL = (
+    "👤 اکانت #{record_id}\n"
+    "نام: {email}\n"
+    "وضعیت: {status}\n\n"
+    "مصرف: {used} از {total}\n"
+    "{bar} {percent}%\n"
+    "انقضا: {expiry}"
+)
+GUEST_ACCOUNT_ACTIVE = "🟢 فعال"
+GUEST_ACCOUNT_INACTIVE = "🔴 غیرفعال (برای فعال‌سازی تمدید کنید)"
 GUEST_ORDER_REJECTED_ADMIN = "❌ سفارش #{order_id} رد شد."
 GUEST_ORDER_REJECTED = "متأسفانه سفارش شما رد شد. برای پیگیری با ادمین تماس بگیرید."
 GUEST_ORDER_NOT_FOUND = "سفارش یافت نشد."
@@ -521,8 +647,10 @@ DELETE_CONFIRM = (
     "آیا از حذف سرویس `{email}` مطمئن هستید؟\n"
     "این کار قابل بازگشت نیست.\n\n"
     "{refund_hint}\n\n"
-    "قانون: اگر مصرف واقعی ترافیک کمتر از {threshold_gb} GB باشد، "
-    "سهمیهٔ همان سرویس به حساب شما برمی‌گردد."
+    "قانون بازگشت سهمیه — هر سه شرط با هم:\n"
+    "• مصرف کمتر از {threshold_gb} GB\n"
+    "• سرویس منقضی نشده باشد\n"
+    "• حداکثر {max_age_hours} ساعت از ساختش گذشته باشد"
 )
 DELETE_CONFIRM_REFUND_YES = (
     "مصرف فعلی: {used}\n"
@@ -530,21 +658,36 @@ DELETE_CONFIRM_REFUND_YES = (
 )
 DELETE_CONFIRM_REFUND_NO = (
     "مصرف فعلی: {used}\n"
-    "مصرف از {threshold_gb} GB یا بیشتر است؛ سهمیه برنمی‌گردد."
+    "سهمیه برنمی‌گردد.\n"
+    "دلیل: {reason}"
 )
 DELETE_CONFIRM_REFUND_UNKNOWN = (
     "مصرف ترافیک از پنل خوانده نشد.\n"
-    "در صورت حذف، سهمیه فقط در صورت مصرف زیر آستانه برمی‌گردد."
+    "در صورت حذف، سهمیه برنمی‌گردد."
 )
+REFUND_BLOCK_REASONS = {
+    "used": "مصرف از {threshold_gb} GB بیشتر است.",
+    "expired": "سرویس منقضی شده و دورهٔ فروخته‌شده مصرف شده است.",
+    "too_old": "بیش از {max_age_hours} ساعت از ساخت این سرویس گذشته است.",
+    "unknown_age": "تاریخ ساخت این سرویس مشخص نیست.",
+}
 CREATE_SESSION_EXPIRED = (
     "اطلاعات ساخت ناقص یا منقضی شده است. از «ساخت سرویس» دوباره شروع کنید."
 )
-QR_CHOOSE = "کانفیگ VLESS را برای دریافت QR انتخاب کنید:"
-QR_NOT_AVAILABLE = "کانفیگ VLESS برای این سرویس یافت نشد."
+QR_NOT_AVAILABLE = "لینک ساب یا کانفیگ VLESS برای این سرویس یافت نشد."
 QR_SENT = "QR ارسال شد."
 QR_CAPTION = (
     "{remark_line}اسکن در v2rayNG / Hiddify — "
     "برای بروزرسانی خودکار از لینک ساب استفاده کنید."
+)
+SUB_QR_CAPTION = (
+    "QR لینک ساب — سرویس {email}\n"
+    "اسکن در v2rayNG / Hiddify؛ لیست کانفیگ‌ها خودکار بروز می‌شود."
+)
+CONFIG_QR_CAPTION = (
+    "QR کانفیگ — سرویس {email}\n"
+    "لینک ساب در دسترس نبود، پس QR کانفیگ مستقیم ارسال شد "
+    "(بروزرسانی خودکار ندارد)."
 )
 DELIVERY_GUIDE_WITH_SUB = (
     "━━━━━━━━━━━━━━━━\n"
@@ -559,15 +702,15 @@ DELIVERY_GUIDE_WITH_SUB = (
     "• Hiddify: + → Add subscription / From clipboard → Paste → Update\n"
     "• v2rayN (ویندوز): Subscription group → Add → Paste URL → Update subscription\n"
     "۳) یک بار Update بزنید تا کانفیگ‌ها لود شوند\n\n"
-    "📲 روش جایگزین — QR یا کانفیگ تکی\n"
-    "هر کانفیگ VLESS را جدا کپی کنید یا QR آن را اسکن کنید (دکمه «QR کانفیگ»). "
+    "📲 روش جایگزین — کانفیگ تکی\n"
+    "هر کانفیگ VLESS بالا را جدا کپی و در اپ اضافه کنید. "
     "این روش خودکار بروز نمی‌شود؛ با تغییر سرور باید لینک جدید بگیرید."
 )
 DELIVERY_GUIDE_NO_SUB = (
     "━━━━━━━━━━━━━━━━\n"
     "📌 راهنمای استفاده (برای مشتری)\n\n"
-    "لینک ساب در دسترس نیست. هر کانفیگ VLESS را جدا کپی کنید "
-    "یا QR آن را اسکن کنید (دکمه «QR کانفیگ»).\n\n"
+    "لینک ساب در دسترس نیست. هر کانفیگ VLESS بالا را جدا کپی "
+    "و در اپ اضافه کنید.\n\n"
     "با تغییر تنظیمات سرور، لینک جدید را از فروشنده بگیرید."
 )
 
@@ -594,6 +737,50 @@ SERVICE_DELETED_QUOTA_REFUNDED = (
 )
 SERVICE_ENABLED = "سرویس فعال شد."
 SERVICE_DISABLED = "سرویس غیرفعال شد."
+RENEW_CHOOSE_SOURCE = (
+    "تمدید سرویس `{email}`\n"
+    "سقف فعلی: {current_gb} GB\n"
+    "انقضای فعلی: {expiry_label}\n"
+    "باقی‌مانده سهمیه: {remaining_gb} GB\n\n"
+    "⚠️ با تمدید، مصرف سرویس صفر می‌شود و حجم و تاریخ از نو تعریف می‌شوند.\n\n"
+    "قالب را انتخاب کنید یا مقادیر را دستی وارد کنید:"
+)
+RENEW_VOLUME_PROMPT = (
+    "حجم جدید سرویس را به گیگابایت وارد کنید (حداقل {min_gb:g}):"
+)
+RENEW_EXPIRY_PROMPT = "تعداد روز اعتبار جدید را وارد کنید (0 = نامحدود):"
+RENEW_CONFIRM = (
+    "تأیید تمدید:\n"
+    "سرویس: `{email}`\n"
+    "{template_line}"
+    "حجم جدید: {volume_gb} GB (مصرف صفر می‌شود)\n"
+    "اعتبار جدید: {expiry_label}\n"
+    "سرویس به‌صورت خودکار فعال می‌شود.\n\n"
+    "باقی‌مانده سهمیه: {remaining_before_gb} → {remaining_after_gb} GB\n\n"
+    "ادامه می‌دهید؟"
+)
+RENEW_OK = (
+    "سرویس تمدید شد.\n"
+    "حجم جدید: {new_total_gb} GB\n"
+    "انقضا: {expiry_label}\n"
+    "باقی‌مانده سهمیه: {remaining_gb} GB"
+)
+RENEW_RESET_WARN = (
+    "\n\n⚠️ حجم و تاریخ اعمال شد ولی صفر کردن مصرف در پنل انجام نشد. "
+    "با ادمین تماس بگیرید."
+)
+RENAME_PROMPT = (
+    "نام جدید سرویس را وارد کنید (فقط بخش انتهایی).\n"
+    "نام فعلی: `{email}`\n"
+    "پیشوند `{prefix}` ثابت می‌ماند."
+)
+RENAME_OK = "نام سرویس تغییر کرد.\nنام جدید: `{email}`"
+SUB_REGEN_CONFIRM = (
+    "ساخت لینک ساب جدید برای `{email}`؟\n\n"
+    "⚠️ لینک ساب فعلی بلافاصله از کار می‌افتد و مشتری باید لینک جدید را "
+    "در اپ خود جایگزین کند. کانفیگ‌ها و مصرف تغییری نمی‌کنند."
+)
+SUB_REGEN_OK = "لینک ساب جدید ساخته شد."
 EXPIRY_CHOOSE_MODE = (
     "سرویس: `{email}`\n"
     "انقضای فعلی: {expiry_label}\n\n"
@@ -648,6 +835,14 @@ REDUCE_TRAFFIC_CONFIRM = (
 )
 REDUCE_TRAFFIC_OK = (
     "ترافیک کاهش یافت.\n"
+    "سقف جدید سرویس: {new_total_gb} GB\n"
+    "باقی‌مانده سهمیه: {remaining_gb} GB"
+)
+REDUCE_TRAFFIC_DISABLE_NOTE = (
+    "\n\n⚠️ با این کاهش حجمی برای سرویس باقی نمی‌ماند و سرویس *غیرفعال* می‌شود."
+)
+REDUCE_TRAFFIC_OK_DISABLED = (
+    "ترافیک کاهش یافت و سرویس غیرفعال شد.\n"
     "سقف جدید سرویس: {new_total_gb} GB\n"
     "باقی‌مانده سهمیه: {remaining_gb} GB"
 )

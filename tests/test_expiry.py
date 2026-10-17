@@ -1,6 +1,7 @@
 """Tests for expiry helpers."""
 
 import time
+from datetime import datetime, timedelta
 
 from bot.utils.expiry import InvalidExpiryInputError, parse_expiry_date
 from xui.client import resolve_expiry_after_add_days
@@ -40,7 +41,8 @@ def test_parse_expiry_date_invalid() -> None:
 
 
 def test_parse_expiry_date_valid() -> None:
-    ms = parse_expiry_date("2030-06-15")
+    future = (datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d")
+    ms = parse_expiry_date(future)
     assert ms > 0
 
 

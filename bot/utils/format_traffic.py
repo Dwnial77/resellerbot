@@ -51,6 +51,68 @@ def progress_bar(used: int, total: int, width: int = 10) -> tuple[str, int]:
     return bar, percent
 
 
+EXPIRY_OK = "ok"
+EXPIRY_SOON = "soon"
+EXPIRY_EXPIRED = "expired"
+
+EXPIRY_SOON_DAYS = 3
+
+
+def expiry_status(expiry_ms: int) -> str:
+    """Classify an expiry timestamp: expired / expiring soon / fine.
+
+    `expiry_ms <= 0` means unlimited, which counts as fine.
+    """
+    if expiry_ms <= 0:
+        return EXPIRY_OK
+    try:
+        dt = datetime.fromtimestamp(expiry_ms / 1000, tz=timezone.utc).astimezone()
+    except (OSError, OverflowError, ValueError):
+        return EXPIRY_OK
+    now = datetime.now(tz=dt.tzinfo)
+    if dt <= now:
+        return EXPIRY_EXPIRED
+    if (dt - now).total_seconds() < EXPIRY_SOON_DAYS * 86400:
+        return EXPIRY_SOON
+    return EXPIRY_OK
+
+
+TRAFFIC_SOON_PERCENT = 90
+
+
+def traffic_status(used_bytes: int | None, total_bytes: int) -> str:
+    """Classify traffic usage: exhausted / nearly out / fine.
+
+    `total_bytes <= 0` means no volume cap, and `used_bytes is None` means the
+    panel did not report usage — neither is evidence of a problem.
+    """
+    if used_bytes is None or total_bytes <= 0:
+        return EXPIRY_OK
+    if used_bytes >= total_bytes:
+        return EXPIRY_EXPIRED
+    if used_bytes * 100 >= total_bytes * TRAFFIC_SOON_PERCENT:
+        return EXPIRY_SOON
+    return EXPIRY_OK
+
+
+_STATUS_SEVERITY = {EXPIRY_OK: 0, EXPIRY_SOON: 1, EXPIRY_EXPIRED: 2}
+
+
+def service_status(
+    expiry_ms: int, used_bytes: int | None, total_bytes: int
+) -> str:
+    """Overall service health — the worse of time and volume.
+
+    A service can run out of traffic long before its expiry date, which a
+    time-only check reports as perfectly healthy.
+    """
+    return max(
+        expiry_status(expiry_ms),
+        traffic_status(used_bytes, total_bytes),
+        key=_STATUS_SEVERITY.__getitem__,
+    )
+
+
 def format_expiry(expiry_ms: int) -> str:
     if expiry_ms <= 0:
         return "نامحدود"

@@ -1,12 +1,24 @@
 from __future__ import annotations
 
+import asyncio
+import functools
+import logging
 import time
+from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from enum import Enum
 
+from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config import get_settings
-from bot.utils.format_traffic import client_traffic_used_bytes
+from bot.utils.format_traffic import (
+    EXPIRY_EXPIRED,
+    client_traffic_used_bytes,
+    expiry_status,
+    normalize_traffic_data,
+)
 from db.models import ClientRecord, Reseller
 from db.repository import (
     ClientRepository,
@@ -16,22 +28,45 @@ from db.repository import (
     resolve_attach_inbound_ids_for_assignment,
 )
 from services.usage_alerts import CLIENT_TRAFFIC
-from services.quota import QuotaExceeded, QuotaService
+from services.quota import QuotaExceeded, QuotaService, plan_remove_traffic
 from bot.utils.edit_service import (
     InvalidEditInputError,
     validate_comment,
     validate_limit_ip,
 )
-from services.reseller_labels import build_client_email, panel_group_name
+from services.reseller_labels import (
+    InvalidClientSuffixError,
+    build_client_email,
+    normalize_client_suffix,
+    panel_group_name,
+)
 from xui.client import (
     ClientDelivery,
+    XuiApiError,
     XuiClient,
     XuiError,
     gb_to_bytes,
+    generate_sub_id,
     read_comment,
     read_limit_ip,
     resolve_expiry_after_add_days,
 )
+
+logger = logging.getLogger(__name__)
+
+# Serializes quota-changing operations per reseller (double taps, parallel
+# updates): validation and accounting must not interleave.
+_reseller_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+
+def _per_reseller_lock(fn):
+    @functools.wraps(fn)
+    async def wrapper(self: "ResellerService", reseller: Reseller, *args, **kwargs):
+        async with _reseller_locks[reseller.telegram_id]:
+            await self._refresh_reseller(reseller)
+            return await fn(self, reseller, *args, **kwargs)
+
+    return wrapper
 
 
 @dataclass
@@ -51,17 +86,111 @@ class RemoveTrafficResult:
     removed_bytes: int
     new_total_bytes: int
     remaining_bytes: int
+    disabled: bool = False
 
 
-def is_quota_refund_eligible(
-    used_bytes: int, *, max_traffic_gb: float | None = None
-) -> bool:
+@dataclass
+class RenewServiceResult:
+    charged_bytes: int
+    new_total_bytes: int
+    new_expiry_ms: int
+    remaining_bytes: int
+    traffic_reset_failed: bool = False
+
+
+class RefundBlockReason(str, Enum):
+    """Why a delete did not return quota — surfaced in the confirm dialog."""
+
+    USED = "used"
+    EXPIRED = "expired"
+    TOO_OLD = "too_old"
+    UNKNOWN_AGE = "unknown_age"
+
+
+def _service_age_hours(created_at: datetime | None) -> float | None:
+    """Hours since creation, or None when it cannot be determined.
+
+    `ClientRecord.created_at` comes back from SQLite naive and in UTC
+    (`func.now()` is CURRENT_TIMESTAMP), so it must be compared against UTC.
+    Using local time would shrink the window by the server's offset.
+    """
+    if created_at is None:
+        return None
+    if created_at.tzinfo is None:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+    else:
+        now = datetime.now(timezone.utc)
+    return (now - created_at).total_seconds() / 3600
+
+
+def refund_block_reason(
+    used_bytes: int,
+    *,
+    expiry_ms: int = 0,
+    created_at: datetime | None = None,
+    max_traffic_gb: float | None = None,
+    max_age_hours: float | None = None,
+) -> RefundBlockReason | None:
+    """None when the quota should be returned, otherwise why it should not.
+
+    A refund undoes a recent mistake; it is not a way to hand back the quota of
+    a service whose sold period has already been used up. Checking traffic alone
+    let an expired service be deleted for a full refund.
+    """
+    settings = get_settings()
     threshold_gb = (
         max_traffic_gb
         if max_traffic_gb is not None
-        else get_settings().quota_refund_max_traffic_gb
+        else settings.quota_refund_max_traffic_gb
     )
-    return used_bytes < gb_to_bytes(threshold_gb)
+    if used_bytes >= gb_to_bytes(threshold_gb):
+        return RefundBlockReason.USED
+    if expiry_status(expiry_ms) == EXPIRY_EXPIRED:
+        return RefundBlockReason.EXPIRED
+
+    window = (
+        max_age_hours
+        if max_age_hours is not None
+        else settings.quota_refund_max_age_hours
+    )
+    age = _service_age_hours(created_at)
+    if age is None:
+        # Unknown age must not grant a refund by default.
+        return RefundBlockReason.UNKNOWN_AGE
+    if age > window:
+        return RefundBlockReason.TOO_OLD
+    return None
+
+
+def panel_expiry_ms(traffic: object, record: ClientRecord) -> int:
+    """Expiry from the panel response, falling back to the stored value."""
+    row = normalize_traffic_data(traffic)
+    raw = row.get("expiryTime", row.get("expiry_time"))
+    try:
+        panel_ms = int(raw or 0)
+    except (TypeError, ValueError):
+        panel_ms = 0
+    return panel_ms if panel_ms > 0 else int(record.expiry_time or 0)
+
+
+def is_quota_refund_eligible(
+    used_bytes: int,
+    *,
+    expiry_ms: int = 0,
+    created_at: datetime | None = None,
+    max_traffic_gb: float | None = None,
+    max_age_hours: float | None = None,
+) -> bool:
+    return (
+        refund_block_reason(
+            used_bytes,
+            expiry_ms=expiry_ms,
+            created_at=created_at,
+            max_traffic_gb=max_traffic_gb,
+            max_age_hours=max_age_hours,
+        )
+        is None
+    )
 
 
 class ResellerService:
@@ -83,6 +212,14 @@ class ResellerService:
     async def get_reseller(self, telegram_id: int) -> Reseller | None:
         return await self.reseller_repo.get(telegram_id)
 
+    async def _refresh_reseller(self, reseller: Reseller) -> None:
+        """Reload quota counters that another request may have changed."""
+        try:
+            await self.reseller_repo.session.refresh(reseller)
+        except InvalidRequestError:
+            pass
+
+    @_per_reseller_lock
     async def create_service(
         self,
         reseller: Reseller,
@@ -102,11 +239,21 @@ class ResellerService:
         )
 
         email = build_client_email(reseller, client_suffix)
-        if await self.client_repo.email_exists(email, panel_id=panel_id):
+        if await self.client_repo.email_exists(
+            email, panel_id=panel_id
+        ) or await self.client_repo.get_for_reseller_email(
+            reseller.telegram_id, email
+        ):
+            # Some lookups (rename, guest links) go by email alone, so a
+            # reseller's names must be unique across all of their panels.
             raise XuiError("این نام سرویس قبلاً استفاده شده.")
         existing_panel = await self.xui.get_client(email)
         if existing_panel is not None:
             raise XuiError("این نام سرویس در پنل وجود دارد.")
+        # Before touching the database: confirm the inbounds still exist on the
+        # panel. Costs nothing extra — the flow resolution needed that list too.
+        flow = await self.xui.prepare_client_inbounds(ids)
+
         expiry_ms = 0
         if expiry_days > 0:
             expiry_ms = int((time.time() + expiry_days * 86400) * 1000)
@@ -124,19 +271,26 @@ class ResellerService:
         if self.xui.auto_reseller_group:
             panel_group = panel_group_name(reseller)
 
+        panel_client_created = False
         try:
             _, sub_id = await self.xui.create_client(
                 email=email,
                 volume_gb=volume_gb,
                 inbound_ids=ids,
                 expiry_days=expiry_days,
+                flow=flow,
                 group=panel_group,
             )
+            panel_client_created = True
             record = await self.client_repo.set_sub_id(record, sub_id)
             delivery = await self.xui.get_client_delivery(
                 email, sub_id, total_bytes=allocated
             )
-        except (XuiError, Exception) as e:
+        except Exception as e:
+            if panel_client_created or not isinstance(e, XuiApiError):
+                # The client may exist on the panel (created, or the add request
+                # timed out after being applied); don't leave it unbilled.
+                await self._delete_panel_client_quietly(email)
             await self.client_repo.delete(record)
             raise XuiError(str(e) or "خطای ناشناخته پنل") from e
 
@@ -145,6 +299,7 @@ class ResellerService:
         )
         return record, delivery
 
+    @_per_reseller_lock
     async def delete_service(
         self, reseller: Reseller, email: str
     ) -> DeleteServiceResult:
@@ -152,14 +307,21 @@ class ResellerService:
         refund = 0
         try:
             traffic = await self.xui.get_traffic(email)
-            if is_quota_refund_eligible(client_traffic_used_bytes(traffic)):
+            if is_quota_refund_eligible(
+                client_traffic_used_bytes(traffic),
+                expiry_ms=panel_expiry_ms(traffic, record),
+                created_at=record.created_at,
+            ):
                 refund = record.allocated_bytes
         except XuiError:
             pass
         try:
             await self.xui.delete_client(email)
-        except XuiError:
-            pass
+        except XuiError as e:
+            # Only forget the service when the panel no longer has it; otherwise
+            # the client would keep working after its quota was refunded.
+            if await self._panel_client_exists(email):
+                raise XuiError(f"حذف سرویس در پنل انجام نشد: {e}") from e
         await UsageAlertRepository(self.client_repo.session).clear(
             reseller.telegram_id, CLIENT_TRAFFIC, client_email=email
         )
@@ -169,6 +331,18 @@ class ResellerService:
                 reseller.telegram_id, refund
             )
         return DeleteServiceResult(refunded_bytes=refund)
+
+    async def _panel_client_exists(self, email: str) -> bool:
+        try:
+            return await self.xui.get_client(email) is not None
+        except XuiError:
+            return True
+
+    async def _delete_panel_client_quietly(self, email: str) -> None:
+        try:
+            await self.xui.delete_client(email)
+        except XuiError as e:
+            logger.warning("Cleanup of panel client %s failed: %s", email, e)
 
     async def get_traffic(self, reseller: Reseller, email: str) -> dict:
         await self._get_owned_record(reseller, email)
@@ -230,6 +404,7 @@ class ResellerService:
             raise XuiError("کلاینت در پنل یافت نشد.")
         return read_limit_ip(client), read_comment(client)
 
+    @_per_reseller_lock
     async def add_service_traffic(
         self, reseller: Reseller, email: str, volume_gb: float
     ) -> AddTrafficResult:
@@ -253,6 +428,7 @@ class ResellerService:
             remaining_bytes=st.remaining_bytes,
         )
 
+    @_per_reseller_lock
     async def remove_service_traffic(
         self, reseller: Reseller, email: str, volume_gb: float
     ) -> RemoveTrafficResult:
@@ -269,17 +445,131 @@ class ResellerService:
             )
         except QuotaExceeded as e:
             raise XuiError(str(e)) from e
-        await self.xui.subtract_client_traffic_bytes(email, removed)
-        record = await self.client_repo.subtract_allocated_bytes(record, removed)
-        await self.reseller_repo.subtract_lifetime_allocated(
-            reseller.telegram_id, removed
-        )
+        plan = plan_remove_traffic(record.allocated_bytes, removed, used_bytes)
+        if plan.disable:
+            # Never let the panel cap reach 0 (unlimited): set an absolute
+            # non-zero cap and disable the client instead.
+            await self.xui.update_client_fields(
+                email, total_bytes=plan.new_total_bytes, enable=False
+            )
+        else:
+            await self.xui.subtract_client_traffic_bytes(email, plan.removed_bytes)
+        if plan.removed_bytes > 0:
+            record = await self.client_repo.subtract_allocated_bytes(
+                record, plan.removed_bytes
+            )
+            await self.reseller_repo.subtract_lifetime_allocated(
+                reseller.telegram_id, plan.removed_bytes
+            )
         st = await self.quota.global_status(reseller)
         return RemoveTrafficResult(
-            removed_bytes=removed,
+            removed_bytes=plan.removed_bytes,
             new_total_bytes=record.allocated_bytes,
             remaining_bytes=st.remaining_bytes,
+            disabled=plan.disable,
         )
+
+    @_per_reseller_lock
+    async def renew_service(
+        self,
+        reseller: Reseller,
+        email: str,
+        volume_gb: float,
+        expiry_days: int,
+        *,
+        extend_from_current: bool = False,
+    ) -> RenewServiceResult:
+        """Redefine an existing service: reset usage, set new volume + expiry, enable.
+
+        The full new volume is charged against the reseller quota, which is what
+        keeps this from being a free-traffic-reset backdoor. Expiry is now + days,
+        or with extend_from_current max(now, current expiry) + days (guest
+        renewals: paying early must not lose the remaining days).
+        """
+        record = await self._get_owned_record(reseller, email)
+        try:
+            allocated = await self.quota.validate_renew(
+                reseller, record.panel_id, volume_gb
+            )
+        except QuotaExceeded as e:
+            raise XuiError(str(e)) from e
+
+        new_expiry_ms = 0
+        if expiry_days > 0 and extend_from_current:
+            current = await self._current_expiry_ms(email, record)
+            new_expiry_ms = resolve_expiry_after_add_days(current, expiry_days)
+        elif expiry_days > 0:
+            new_expiry_ms = int((time.time() + expiry_days * 86400) * 1000)
+
+        # Panel first: if this fails nothing is charged and nothing is reset.
+        await self.xui.update_client_fields(
+            email,
+            total_bytes=allocated,
+            expiry_ms=new_expiry_ms,
+            enable=True,
+        )
+
+        record = await self.client_repo.set_allocated_bytes(record, allocated)
+        record = await self.client_repo.set_expiry_time(record, new_expiry_ms)
+        await self.reseller_repo.add_lifetime_allocated(
+            reseller.telegram_id, allocated
+        )
+        await UsageAlertRepository(self.client_repo.session).clear(
+            reseller.telegram_id, CLIENT_TRAFFIC, client_email=email
+        )
+
+        # Charged already; a failed reset leaves the customer short, not the
+        # reseller ahead, so report it instead of raising.
+        reset_failed = False
+        try:
+            await self.xui.reset_client_traffic(email)
+        except XuiError as e:
+            reset_failed = True
+            logger.warning("Traffic reset failed for %s after renew: %s", email, e)
+
+        st = await self.quota.global_status(reseller)
+        return RenewServiceResult(
+            charged_bytes=allocated,
+            new_total_bytes=record.allocated_bytes,
+            new_expiry_ms=new_expiry_ms,
+            remaining_bytes=st.remaining_bytes,
+            traffic_reset_failed=reset_failed,
+        )
+
+    async def rename_service(
+        self, reseller: Reseller, email: str, new_suffix: str
+    ) -> str:
+        record = await self._get_owned_record(reseller, email)
+        try:
+            suffix = normalize_client_suffix(new_suffix)
+            new_email = build_client_email(reseller, suffix)
+        except InvalidClientSuffixError as e:
+            raise XuiError(str(e)) from e
+        if new_email == email:
+            raise XuiError("نام جدید با نام فعلی یکسان است.")
+        if await self.client_repo.email_exists(
+            new_email, panel_id=record.panel_id
+        ) or await self.client_repo.get_for_reseller_email(
+            reseller.telegram_id, new_email
+        ):
+            raise XuiError("این نام سرویس قبلاً استفاده شده.")
+        if await self.xui.get_client(new_email) is not None:
+            raise XuiError("این نام سرویس در پنل وجود دارد.")
+
+        await self.xui.update_client_fields(email, new_email=new_email)
+        await self.client_repo.set_email(record, new_email)
+        # Alert rows are keyed by the old email; drop them so the new name starts clean.
+        await UsageAlertRepository(self.client_repo.session).clear(
+            reseller.telegram_id, CLIENT_TRAFFIC, client_email=email
+        )
+        return new_email
+
+    async def regenerate_sub_id(self, reseller: Reseller, email: str) -> str:
+        record = await self._get_owned_record(reseller, email)
+        new_sub_id = generate_sub_id()
+        await self.xui.update_client_fields(email, sub_id=new_sub_id)
+        await self.client_repo.set_sub_id(record, new_sub_id)
+        return new_sub_id
 
     async def update_service_limit_ip(
         self, reseller: Reseller, email: str, limit_ip: int
