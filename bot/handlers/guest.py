@@ -29,6 +29,7 @@ from bot.utils.format_traffic import (
     format_expiry,
     progress_bar,
 )
+from bot.utils.fa_text import fa_days, fa_digits, fa_gb, fa_toman
 from bot.utils.markdown import escape_md
 from bot.utils.qr_vless import InvalidVlessQrError, generate_vless_qr_png
 from bot.utils.template_labels import expiry_label, format_gb, format_toman
@@ -72,9 +73,9 @@ def _plan_list_text(header: str, plans: list[Plan]) -> str:
         lines.append(
             t.GUEST_PLAN_LINE.format(
                 name=p.name,
-                volume_gb=format_gb(p.volume_gb),
-                expiry_label=expiry_label(p.expiry_days),
-                price=format_toman(p.price_toman),
+                volume=fa_gb(p.volume_gb),
+                expiry=fa_days(p.expiry_days),
+                price=fa_toman(p.price_toman),
             )
         )
     lines.append(t.GUEST_PLAN_LIST_FOOTER)
@@ -167,7 +168,7 @@ async def _start_payment(
     await state.update_data(plan_id=plan_id, renew_record_id=renew_record_id)
     await state.set_state(GuestPurchaseStates.receipt)
     renew_line = (
-        t.GUEST_PAYMENT_RENEW_LINE.format(record_id=renew_record_id)
+        t.GUEST_PAYMENT_RENEW_LINE.format(record_id=fa_digits(renew_record_id))
         if renew_record_id is not None
         else ""
     )
@@ -175,9 +176,9 @@ async def _start_payment(
         t.GUEST_PAYMENT_PROMPT.format(
             renew_line=renew_line,
             name=escape_md(plan.name),
-            volume_gb=format_gb(plan.volume_gb),
-            expiry_label=expiry_label(plan.expiry_days),
-            price=format_toman(plan.price_toman),
+            volume=fa_gb(plan.volume_gb),
+            expiry=fa_days(plan.expiry_days),
+            price=fa_toman(plan.price_toman),
             card_number=(config.card_number or "—").replace("`", ""),
             card_holder=escape_md(config.card_holder or "—"),
         ),
@@ -548,7 +549,9 @@ async def guest_account_renew(callback: CallbackQuery, state: FSMContext) -> Non
         await callback.answer(t.GUEST_NO_PLANS, show_alert=True)
         return
     await callback.message.edit_text(  # type: ignore[union-attr]
-        _plan_list_text(t.GUEST_RENEW_PLAN_HEADER.format(record_id=record_id), plans),
+        _plan_list_text(
+            t.GUEST_RENEW_PLAN_HEADER.format(record_id=fa_digits(record_id)), plans
+        ),
         reply_markup=guest_plan_picker_kb(plans, renew_record_id=record_id),
     )
     await callback.answer()

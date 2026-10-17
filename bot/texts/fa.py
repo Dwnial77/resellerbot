@@ -519,14 +519,21 @@ GUEST_SALES_DISABLED = "فروش مستقیم فعلاً فعال نیست. با
 GUEST_NO_PLANS = "فعلاً پلنی برای خرید موجود نیست. بعداً امتحان کنید."
 GUEST_PLAN_LIST_HEADER = "🛒 پلن‌های موجود:"
 GUEST_RENEW_PLAN_HEADER = "♻️ تمدید اکانت #{record_id}\nپلن تمدید را انتخاب کنید:"
-GUEST_PLAN_LINE = "\n▫️ {name}\n     حجم: {volume_gb} GB | مدت: {expiry_label} | {price} تومان"
+# Each line starts with RLM (U+200F) and uses Persian digits: keeps RTL order
+# in Telegram even when a plan name is an emoji or Latin text.
+GUEST_PLAN_LINE = (
+    "\n\n\u200f▫️ {name}"
+    "\n\u200f      حجم: {volume}"
+    "\n\u200f      مدت: {expiry}"
+    "\n\u200f      قیمت: {price} تومان"
+)
 GUEST_PLAN_LIST_FOOTER = "\n\nیکی از پلن‌ها را انتخاب کنید 👇"
 GUEST_PAYMENT_PROMPT = (
     "🧾 پیش‌فاکتور{renew_line}\n\n"
-    "پلن: {name}\n"
-    "حجم: {volume_gb} GB\n"
-    "مدت: {expiry_label}\n"
-    "💰 مبلغ قابل پرداخت: {price} تومان\n\n"
+    "\u200fپلن: {name}\n"
+    "\u200fحجم: {volume}\n"
+    "\u200fمدت: {expiry}\n"
+    "\u200f💰 مبلغ قابل پرداخت: {price} تومان\n\n"
     "💳 شماره کارت: `{card_number}`\n"
     "👤 به‌نام: {card_holder}\n\n"
     "بعد از واریز، *عکس رسید* یا متن پیامک واریز را همین‌جا بفرستید."

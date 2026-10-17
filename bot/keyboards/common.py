@@ -17,7 +17,7 @@ from bot.utils.format_traffic import (
     service_status,
 )
 from bot.utils.report_format import format_report_button_label, usage_percent_int
-from bot.utils.template_labels import expiry_label, format_gb, format_toman
+from bot.utils.fa_text import RLM, fa_days, fa_digits, fa_gb, fa_toman, rtl
 from db.models import (
     ClientRecord,
     GuestSalesConfig,
@@ -1320,10 +1320,13 @@ def plan_wizard_confirm_kb() -> InlineKeyboardMarkup:
 
 
 def guest_plan_button_label(plan: Plan) -> str:
+    # RTL-safe: Persian digits/units and a leading RLM (see bot/utils/fa_text.py).
     name = plan.name if len(plan.name) <= 20 else plan.name[:19] + "…"
-    return (
-        f"{name} • {format_gb(plan.volume_gb)}GB • {expiry_label(plan.expiry_days)}"
-        f" • {format_toman(plan.price_toman)} تومان"
+    # The name may be Latin or a flag (bidi class L); the RLM after it keeps it
+    # from merging with the number that follows.
+    return rtl(
+        f"{name}{RLM} | {fa_gb(plan.volume_gb)} | {fa_days(plan.expiry_days)}"
+        f" | {fa_toman(plan.price_toman)} تومان"
     )
 
 
@@ -1398,8 +1401,8 @@ def _guest_account_label(record: ClientRecord) -> str:
     if expiry_ms <= 0:
         expiry = "نامحدود"
     else:
-        expiry = datetime.fromtimestamp(expiry_ms / 1000).strftime("%Y-%m-%d")
-    return f"🔹 اکانت #{record.id} • انقضا: {expiry}"
+        expiry = fa_digits(datetime.fromtimestamp(expiry_ms / 1000).strftime("%Y/%m/%d"))
+    return rtl(f"🔹 اکانت {fa_digits(record.id)} | انقضا: {expiry}")
 
 
 def guest_accounts_list_kb(records: list[ClientRecord]) -> InlineKeyboardMarkup:
