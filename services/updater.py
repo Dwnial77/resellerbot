@@ -283,9 +283,17 @@ def save_pending_update(
     root = root or project_root()
     zip_path = pending_zip_path(root)
     zip_path.write_bytes(zip_bytes)
-    target = inspect_release_zip(
-        zip_path, allow_downgrade=allow_downgrade
-    )
+    try:
+        target = inspect_release_zip(
+            zip_path, allow_downgrade=allow_downgrade
+        )
+    except zipfile.BadZipFile as e:
+        # A rejected ZIP must not stay staged: it would be applied on restart.
+        clear_pending(root)
+        raise UpdateError("فایل ZIP معتبر نیست.") from e
+    except Exception:
+        clear_pending(root)
+        raise
     meta = PendingUpdateMeta(
         target_version=target,
         uploaded_by=uploaded_by,
@@ -386,6 +394,8 @@ def apply_pending_update(
         )
     except Exception as e:
         logger.exception("Pending update failed")
+        # Don't retry the same failing ZIP on every boot (it also blocks restores).
+        clear_pending(root)
         result = UpdateResult(
             success=False,
             previous_version=previous,

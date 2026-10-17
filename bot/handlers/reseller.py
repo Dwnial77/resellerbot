@@ -2330,12 +2330,20 @@ async def service_delete_cancel(
     await callback.answer()
 
 
+def escape_md(text: str) -> str:
+    """Escape user text for Telegram legacy Markdown (parse_mode="Markdown")."""
+    for ch in ("_", "*", "`", "["):
+        text = text.replace(ch, "\\" + ch)
+    return text
+
+
 def _comment_display(comment: str) -> str:
     if not comment:
         return "—"
-    if len(comment) <= 80:
-        return comment
-    return comment[:77] + "..."
+    if len(comment) > 80:
+        comment = comment[:77] + "..."
+    # EDIT_MENU is sent with legacy Markdown; an unescaped _ * ` [ breaks it.
+    return escape_md(comment)
 
 
 async def _show_service_edit_menu(
