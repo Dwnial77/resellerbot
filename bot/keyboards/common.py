@@ -1194,16 +1194,48 @@ def plan_admin_hub_kb(plans: list[Plan]) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text=f"{status} {label}",
-                    callback_data=f"aplan:toggle:{p.id}",
-                ),
-                InlineKeyboardButton(
-                    text="🗑",
-                    callback_data=f"aplan:del:{p.id}",
+                    callback_data=f"aplan:view:{p.id}",
                 ),
             ]
         )
     rows.append([InlineKeyboardButton(text=L.ADD_PLAN, callback_data="aplan:add")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def plan_detail_kb(plan: Plan) -> InlineKeyboardMarkup:
+    pid = plan.id
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=L.PLAN_EDIT_NAME, callback_data=f"aplan:edit:name:{pid}"),
+                InlineKeyboardButton(text=L.PLAN_EDIT_PRICE, callback_data=f"aplan:edit:price:{pid}"),
+            ],
+            [
+                InlineKeyboardButton(text=L.PLAN_EDIT_VOLUME, callback_data=f"aplan:edit:volume:{pid}"),
+                InlineKeyboardButton(text=L.PLAN_EDIT_DAYS, callback_data=f"aplan:edit:days:{pid}"),
+            ],
+            [
+                InlineKeyboardButton(text=L.PLAN_MOVE_UP, callback_data=f"aplan:move:up:{pid}"),
+                InlineKeyboardButton(text=L.PLAN_MOVE_DOWN, callback_data=f"aplan:move:down:{pid}"),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=L.active_toggle_label(is_active=plan.is_active),
+                    callback_data=f"aplan:toggle:{pid}",
+                ),
+                InlineKeyboardButton(text=L.DELETE, callback_data=f"aplan:del:{pid}"),
+            ],
+            [InlineKeyboardButton(text=L.BACK, callback_data="aplan:hub")],
+        ]
+    )
+
+
+def plan_edit_cancel_kb(plan_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=L.CANCEL, callback_data=f"aplan:view:{plan_id}")]
+        ]
+    )
 
 
 def plan_delete_confirm_kb(plan_id: int) -> InlineKeyboardMarkup:
@@ -1221,7 +1253,7 @@ def plan_delete_confirm_kb(plan_id: int) -> InlineKeyboardMarkup:
 
 
 def plan_wizard_volume_kb() -> InlineKeyboardMarkup:
-    volumes = (5, 10, 20, 50, 100)
+    volumes = (20, 30, 50, 100, 200)
     row = [
         InlineKeyboardButton(text=f"{v} GB", callback_data=f"aplan:vol:{v}")
         for v in volumes

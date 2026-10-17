@@ -109,6 +109,10 @@ class AddPlanStates(StatesGroup):
     confirm = State()
 
 
+class EditPlanStates(StatesGroup):
+    value = State()
+
+
 class GuestConfigStates(StatesGroup):
     pick_panel = State()
     pick_inbounds = State()

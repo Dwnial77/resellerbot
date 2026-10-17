@@ -4,7 +4,11 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from bot.handlers.admin_plans import _plan_hub_content
-from bot.keyboards.common import guest_plan_picker_kb, plan_admin_hub_kb
+from bot.keyboards.common import (
+    guest_plan_picker_kb,
+    plan_admin_hub_kb,
+    plan_detail_kb,
+)
 from db.models import Base, GuestOrder, Plan
 from db.repository import (
     InvalidPlanError,
@@ -69,14 +73,21 @@ def _plan(id_: int = 1, *, is_active: bool = True, volume_gb: float = 25) -> Pla
     )
 
 
-def test_plan_admin_hub_kb_toggle_and_delete_buttons() -> None:
-    plans = [_plan(1, is_active=True), _plan(2, is_active=False)]
-    kb = plan_admin_hub_kb(plans)
-    callbacks = [b.callback_data for row in kb.inline_keyboard for b in row]
-    assert "aplan:toggle:1" in callbacks
-    assert "aplan:del:1" in callbacks
-    assert "aplan:toggle:2" in callbacks
-    assert "aplan:add" in callbacks
+def test_plan_admin_hub_kb_opens_plan_detail() -> None:
+    plans = [_plan(1), _plan(2, is_active=False)]
+    callbacks = [b.callback_data for row in plan_admin_hub_kb(plans).inline_keyboard for b in row]
+    assert callbacks == ["aplan:view:1", "aplan:view:2", "aplan:add"]
+
+
+def test_plan_detail_kb_has_edit_move_toggle_delete() -> None:
+    callbacks = {
+        b.callback_data for row in plan_detail_kb(_plan(7)).inline_keyboard for b in row
+    }
+    assert {
+        "aplan:edit:name:7", "aplan:edit:price:7", "aplan:edit:volume:7",
+        "aplan:edit:days:7", "aplan:move:up:7", "aplan:move:down:7",
+        "aplan:toggle:7", "aplan:del:7", "aplan:hub",
+    } == callbacks
 
 
 def test_guest_plan_picker_kb_lists_all_given_plans() -> None:
@@ -184,3 +195,35 @@ def test_plan_hub_content_keeps_volume_and_expiry_on_separate_lines(tmp_path) ->
         await engine.dispose()
 
     asyncio.run(_run())
+
+
+def test_plan_update_and_move(tmp_path) -> None:
+    async def _run() -> None:
+        engine, factory = await _make_session_factory(tmp_path)
+        async with factory() as session:
+            repo = PlanRepository(session)
+            a = await repo.create("a", 20, 30, 1000)
+            b = await repo.create("b", 30, 30, 2000)
+            c = await repo.create("c", 50, 30, 3000)
+
+            updated = await repo.update(b.id, name=" B2 ", price_toman=2500)
+            assert (updated.name, updated.price_toman, updated.volume_gb) == ("B2", 2500, 30)
+            with pytest.raises(InvalidPlanError):
+                await repo.update(b.id, volume_gb=10)
+
+            assert await repo.move(c.id, -1) is True
+            assert [p.id for p in await repo.list_all()] == [a.id, c.id, b.id]
+            assert await repo.move(a.id, -1) is False
+            assert await repo.move(b.id, +1) is False
+        await engine.dispose()
+
+    asyncio.run(_run())
+
+
+def test_parse_price_accepts_separators() -> None:
+    from bot.handlers.admin_plans import _parse_price
+
+    assert _parse_price("150,000") == 150000
+    assert _parse_price("۱۵۰٬۰۰۰") == 150000
+    with pytest.raises(ValueError):
+        _parse_price("0")
