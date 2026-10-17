@@ -2,6 +2,16 @@ def expiry_label(days: int) -> str:
     return f"{days} روز" if days > 0 else "نامحدود"
 
 
+def format_toman(amount: int | float) -> str:
+    """150000 -> '150,000' (thousands separators for prices)."""
+    return f"{int(amount):,}"
+
+
+def format_gb(volume_gb: float) -> str:
+    """30.0 -> '30', 2.5 -> '2.5'."""
+    return f"{float(volume_gb):g}"
+
+
 def suggest_template_name(volume_gb: float, expiry_days: int) -> str:
     if volume_gb == int(volume_gb):
         vol_s = str(int(volume_gb))

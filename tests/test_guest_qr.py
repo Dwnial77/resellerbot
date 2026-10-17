@@ -19,7 +19,7 @@ def _configs(n: int) -> list[VlessConfig]:
 def test_guest_vless_qr_kb_uses_gqr_prefix() -> None:
     kb = guest_vless_qr_kb("guest1_5", _configs(2))
     callbacks = [b.callback_data for row in kb.inline_keyboard for b in row]
-    assert callbacks == ["gqr:guest1_5:0", "gqr:guest1_5:1"]
+    assert callbacks == ["gqr:guest1_5:0", "gqr:guest1_5:1", "gacc:list"]
 
 
 async def _make_session_factory(tmp_path):

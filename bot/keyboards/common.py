@@ -1,4 +1,13 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from datetime import datetime
+
+from aiogram.enums import ButtonStyle
+from aiogram.types import (
+    CopyTextButton,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
 
 from bot.keyboards import labels as L
 from bot.utils.format_delivery import config_display_label
@@ -8,6 +17,7 @@ from bot.utils.format_traffic import (
     service_status,
 )
 from bot.utils.report_format import format_report_button_label, usage_percent_int
+from bot.utils.template_labels import expiry_label, format_gb, format_toman
 from db.models import (
     ClientRecord,
     GuestSalesConfig,
@@ -39,8 +49,11 @@ def reseller_main_kb() -> ReplyKeyboardMarkup:
 def guest_main_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=L.BUY_ACCOUNT), KeyboardButton(text=L.MY_ORDERS)],
-            [KeyboardButton(text=L.SUPPORT)],
+            [
+                KeyboardButton(text=L.BUY_ACCOUNT, style=ButtonStyle.SUCCESS),
+                KeyboardButton(text=L.MY_ACCOUNTS, style=ButtonStyle.PRIMARY),
+            ],
+            [KeyboardButton(text=L.MY_ORDERS), KeyboardButton(text=L.SUPPORT)],
         ],
         resize_keyboard=True,
     )
@@ -1274,17 +1287,119 @@ def plan_wizard_confirm_kb() -> InlineKeyboardMarkup:
     )
 
 
-def guest_plan_picker_kb(plans: list[Plan]) -> InlineKeyboardMarkup:
+def guest_plan_button_label(plan: Plan) -> str:
+    name = plan.name if len(plan.name) <= 20 else plan.name[:19] + "…"
+    return (
+        f"{name} • {format_gb(plan.volume_gb)}GB • {expiry_label(plan.expiry_days)}"
+        f" • {format_toman(plan.price_toman)} تومان"
+    )
+
+
+def guest_plan_picker_kb(
+    plans: list[Plan], *, renew_record_id: int | None = None
+) -> InlineKeyboardMarkup:
+    """Plan buttons for a new purchase, or for renewing renew_record_id."""
     eligible = [p for p in plans if p.volume_gb >= MIN_CLIENT_VOLUME_GB]
     rows: list[list[InlineKeyboardButton]] = []
     for p in eligible:
-        label = f"{p.name} — {p.volume_gb}GB — {p.price_toman} تومان"
-        if len(label) > 40:
-            label = label[:37] + "..."
+        cb = (
+            f"gplan:{p.id}"
+            if renew_record_id is None
+            else f"grenew:{renew_record_id}:{p.id}"
+        )
         rows.append(
-            [InlineKeyboardButton(text=label, callback_data=f"gplan:{p.id}")]
+            [
+                InlineKeyboardButton(
+                    text=guest_plan_button_label(p),
+                    callback_data=cb,
+                    style=ButtonStyle.SUCCESS,
+                )
+            ]
+        )
+    if renew_record_id is not None:
+        rows.append(
+            [InlineKeyboardButton(text=L.BACK, callback_data=f"gacc:v:{renew_record_id}")]
         )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def guest_payment_kb(card_number: str | None) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    card = (card_number or "").strip()
+    if card:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=L.GUEST_COPY_CARD,
+                    copy_text=CopyTextButton(text=card.replace(" ", "").replace("-", "")),
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=L.GUEST_CANCEL_PAYMENT,
+                callback_data="gpay:cancel",
+                style=ButtonStyle.DANGER,
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def guest_my_accounts_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.MY_ACCOUNTS,
+                    callback_data="gacc:list",
+                    style=ButtonStyle.PRIMARY,
+                )
+            ]
+        ]
+    )
+
+
+def _guest_account_label(record: ClientRecord) -> str:
+    expiry_ms = int(record.expiry_time or 0)
+    if expiry_ms <= 0:
+        expiry = "نامحدود"
+    else:
+        expiry = datetime.fromtimestamp(expiry_ms / 1000).strftime("%Y-%m-%d")
+    return f"🔹 اکانت #{record.id} • انقضا: {expiry}"
+
+
+def guest_accounts_list_kb(records: list[ClientRecord]) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=_guest_account_label(r), callback_data=f"gacc:v:{r.id}"
+            )
+        ]
+        for r in records
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def guest_account_detail_kb(record_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=L.GUEST_LINK_QR,
+                    callback_data=f"gacc:link:{record_id}",
+                    style=ButtonStyle.PRIMARY,
+                ),
+                InlineKeyboardButton(
+                    text=L.GUEST_RENEW,
+                    callback_data=f"gacc:renew:{record_id}",
+                    style=ButtonStyle.SUCCESS,
+                ),
+            ],
+            [InlineKeyboardButton(text=L.BACK, callback_data="gacc:back")],
+        ]
+    )
 
 
 def guest_order_review_kb(order_id: int) -> InlineKeyboardMarkup:
@@ -1292,10 +1407,14 @@ def guest_order_review_kb(order_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✅ تأیید و تحویل", callback_data=f"gorder:approve:{order_id}"
+                    text=L.GUEST_APPROVE_ORDER,
+                    callback_data=f"gorder:approve:{order_id}",
+                    style=ButtonStyle.SUCCESS,
                 ),
                 InlineKeyboardButton(
-                    text="❌ رد", callback_data=f"gorder:reject:{order_id}"
+                    text=L.GUEST_REJECT_ORDER,
+                    callback_data=f"gorder:reject:{order_id}",
+                    style=ButtonStyle.DANGER,
                 ),
             ]
         ]
@@ -1743,6 +1862,7 @@ def guest_vless_qr_kb(email: str, configs: list[VlessConfig]) -> InlineKeyboardM
         rows.append(
             [InlineKeyboardButton(text=_qr_button_label(email, cfg, i), callback_data=cb)]
         )
+    rows.append(guest_my_accounts_kb().inline_keyboard[0])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

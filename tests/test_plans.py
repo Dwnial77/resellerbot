@@ -31,8 +31,8 @@ def test_normalize_plan_name_too_long() -> None:
 
 
 def test_validate_plan_params_ok() -> None:
-    validate_plan_params(10.0, 30, 150000)
-    validate_plan_params(0.5, 0, 1)
+    validate_plan_params(20.0, 30, 150000)
+    validate_plan_params(50, 0, 1)
 
 
 def test_validate_plan_params_volume() -> None:
@@ -40,18 +40,21 @@ def test_validate_plan_params_volume() -> None:
         validate_plan_params(0, 30, 1000)
     with pytest.raises(InvalidPlanError, match="حجم"):
         validate_plan_params(-1, 30, 1000)
+    # Below the service minimum: guests could never buy it.
+    with pytest.raises(InvalidPlanError, match="حداقل"):
+        validate_plan_params(10, 30, 1000)
 
 
 def test_validate_plan_params_expiry() -> None:
     with pytest.raises(InvalidPlanError, match="انقضا"):
-        validate_plan_params(10, -1, 1000)
+        validate_plan_params(20, -1, 1000)
 
 
 def test_validate_plan_params_price() -> None:
     with pytest.raises(InvalidPlanError, match="قیمت"):
-        validate_plan_params(10, 30, 0)
+        validate_plan_params(20, 30, 0)
     with pytest.raises(InvalidPlanError, match="قیمت"):
-        validate_plan_params(10, 30, -5)
+        validate_plan_params(20, 30, -5)
 
 
 def _plan(id_: int = 1, *, is_active: bool = True, volume_gb: float = 25) -> Plan:

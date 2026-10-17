@@ -199,6 +199,15 @@ class GuestOrder(Base):
     client_record_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("client_records.id"), nullable=True
     )
+    # "new" = buy a new account; "renew" = renew target_client_record_id.
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="new")
+    target_client_record_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    # Plan terms at order time (what the guest paid for); NULL on old orders.
+    volume_gb: Mapped[float | None] = mapped_column(Float, nullable=True)
+    expiry_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    price_toman: Mapped[int | None] = mapped_column(Integer, nullable=True)
     reject_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

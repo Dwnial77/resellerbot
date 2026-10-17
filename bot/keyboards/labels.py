@@ -112,8 +112,15 @@ CHANGE_CARD_HOLDER = "🏷 تغییر نام صاحب کارت"
 
 # Guest (buyer-facing)
 BUY_ACCOUNT = "🛒 خرید اکانت"
+MY_ACCOUNTS = "👤 اکانت‌های من"
 MY_ORDERS = "📦 سفارش‌های من"
 SUPPORT = "🆘 پشتیبانی"
+GUEST_LINK_QR = "🔗 لینک و QR"
+GUEST_RENEW = "♻️ تمدید"
+GUEST_COPY_CARD = "📋 کپی شماره کارت"
+GUEST_CANCEL_PAYMENT = "❌ انصراف"
+GUEST_APPROVE_ORDER = "✅ تأیید و تحویل"
+GUEST_REJECT_ORDER = "❌ رد"
 
 
 def active_toggle_label(*, is_active: bool) -> str:

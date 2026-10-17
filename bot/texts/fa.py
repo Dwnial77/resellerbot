@@ -486,7 +486,13 @@ PLAN_WIZARD_CONFIRM = (
 )
 PLAN_WIZARD_CANCELLED = "افزودن پلن لغو شد."
 
-GUEST_WELCOME = "به ربات خوش آمدید!\nبرای خرید اکانت روی «🛒 خرید اکانت» بزنید."
+GUEST_WELCOME = (
+    "سلام! 👋 به ربات فروش اکانت خوش آمدید.\n\n"
+    "۱. «🛒 خرید اکانت» را بزنید و پلن را انتخاب کنید\n"
+    "۲. مبلغ را کارت‌به‌کارت کنید و رسید را بفرستید\n"
+    "۳. بعد از تأیید، اکانت برایتان ارسال می‌شود\n\n"
+    "مشاهده‌ی مصرف، لینک‌ها و تمدید: «👤 اکانت‌های من»"
+)
 ADMIN_GUEST_PREVIEW_NOTE = (
     "این پیش‌نمایش حالت میهمانه (همون منویی که کاربر معمولی می‌بینه).\n"
     "⚠️ هر کاری اینجا انجام بدی واقعی ثبت میشه (مثلاً سفارش خرید واقعی).\n"
@@ -494,30 +500,63 @@ ADMIN_GUEST_PREVIEW_NOTE = (
 )
 GUEST_SALES_DISABLED = "فروش مستقیم فعلاً فعال نیست. با ادمین تماس بگیرید."
 GUEST_NO_PLANS = "فعلاً پلنی برای خرید موجود نیست. بعداً امتحان کنید."
-GUEST_PLAN_LIST_HEADER = "🛒 پلن‌های موجود:\nیکی را انتخاب کنید:"
+GUEST_PLAN_LIST_HEADER = "🛒 پلن‌های موجود:"
+GUEST_RENEW_PLAN_HEADER = "♻️ تمدید اکانت #{record_id}\nپلن تمدید را انتخاب کنید:"
+GUEST_PLAN_LINE = "\n▫️ {name}\n     حجم: {volume_gb} GB | مدت: {expiry_label} | {price} تومان"
+GUEST_PLAN_LIST_FOOTER = "\n\nیکی از پلن‌ها را انتخاب کنید 👇"
 GUEST_PAYMENT_PROMPT = (
-    "پلن انتخابی: {name}\n"
+    "🧾 پیش‌فاکتور{renew_line}\n\n"
+    "پلن: {name}\n"
     "حجم: {volume_gb} GB\n"
-    "انقضا: {expiry_label}\n"
-    "قیمت: {price_toman} تومان\n\n"
-    "مبلغ {price_toman} تومان را به کارت زیر واریز کنید:\n"
-    "شماره کارت: `{card_number}`\n"
-    "به‌نام: {card_holder}\n\n"
-    "سپس رسید پرداخت را (عکس یا متن) ارسال کنید."
+    "مدت: {expiry_label}\n"
+    "💰 مبلغ قابل پرداخت: {price} تومان\n\n"
+    "💳 شماره کارت: `{card_number}`\n"
+    "👤 به‌نام: {card_holder}\n\n"
+    "بعد از واریز، *عکس رسید* یا متن پیامک واریز را همین‌جا بفرستید."
 )
+GUEST_PAYMENT_RENEW_LINE = " — تمدید اکانت #{record_id}"
+GUEST_PAYMENT_CANCELLED = "خرید لغو شد. هر وقت خواستید دوباره از منو شروع کنید."
 GUEST_ORDER_SUBMITTED = (
-    "سفارش شما ثبت شد و برای بررسی برای ادمین ارسال شد.\n"
-    "پس از تأیید، اکانت شما ارسال می‌شود."
+    "✅ سفارش #{order_id} ثبت شد و برای بررسی ارسال شد.\n"
+    "پس از تأیید ادمین، نتیجه همین‌جا برایتان ارسال می‌شود.\n"
+    "وضعیت سفارش: «📦 سفارش‌های من»"
 )
 GUEST_ORDER_ADMIN_NOTIFY = (
-    "🛒 سفارش جدید #{order_id}\n"
+    "{kind_label} #{order_id}\n"
     "کاربر: {telegram_id}{username}\n"
     "پلن: {name}\n"
     "حجم: {volume_gb} GB\n"
     "انقضا: {expiry_label}\n"
-    "قیمت: {price_toman} تومان"
+    "قیمت: {price} تومان"
+    "{receipt_line}"
 )
+GUEST_ORDER_RECEIPT_TEXT_LINE = "\n\n🧾 متن رسید:\n{receipt}"
+GUEST_ORDER_KIND_NEW = "🛒 سفارش جدید"
+GUEST_ORDER_KIND_RENEW = "♻️ تمدید اکانت {email} — سفارش"
 GUEST_ORDER_APPROVED_ADMIN = "✅ سفارش #{order_id} تحویل داده شد به {telegram_id}."
+GUEST_RENEWED = (
+    "♻️ اکانت شما تمدید شد!\n\n"
+    "اکانت: {email}\n"
+    "حجم: {total} (مصرف صفر شد)\n"
+    "انقضا: {expiry}\n\n"
+    "لینک‌ها تغییری نکرده‌اند و همان کانفیگ قبلی کار می‌کند."
+)
+GUEST_RENEW_RESET_FAILED = (
+    "تمدید انجام شد اما ریست مصرف {email} در پنل ناموفق بود؛ "
+    "مصرف را دستی از پنل ریست کنید."
+)
+GUEST_ACCOUNTS_HEADER = "👤 اکانت‌های شما:\nبرای جزئیات، مصرف، لینک یا تمدید روی اکانت بزنید."
+GUEST_ACCOUNTS_EMPTY = "هنوز اکانتی ندارید. از «🛒 خرید اکانت» شروع کنید."
+GUEST_ACCOUNT_DETAIL = (
+    "👤 اکانت #{record_id}\n"
+    "نام: {email}\n"
+    "وضعیت: {status}\n\n"
+    "مصرف: {used} از {total}\n"
+    "{bar} {percent}%\n"
+    "انقضا: {expiry}"
+)
+GUEST_ACCOUNT_ACTIVE = "🟢 فعال"
+GUEST_ACCOUNT_INACTIVE = "🔴 غیرفعال (برای فعال‌سازی تمدید کنید)"
 GUEST_ORDER_REJECTED_ADMIN = "❌ سفارش #{order_id} رد شد."
 GUEST_ORDER_REJECTED = "متأسفانه سفارش شما رد شد. برای پیگیری با ادمین تماس بگیرید."
 GUEST_ORDER_NOT_FOUND = "سفارش یافت نشد."

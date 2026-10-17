@@ -4,13 +4,14 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 
 from bot.handlers.admin import _is_admin
-from bot.keyboards.common import guest_vless_qr_kb
+from bot.keyboards.common import guest_my_accounts_kb, guest_vless_qr_kb
 from bot.texts import fa as t
 from bot.utils.format_delivery import DELIVERY_PARSE_MODE, format_delivery_message
+from bot.utils.format_traffic import format_bytes, format_expiry
 from db.models import Plan
 from db.repository import GuestOrderRepository, GuestSalesConfigRepository
 from db.session import get_session_factory
-from services.guest_sales import deliver_guest_order
+from services.guest_sales import deliver_guest_order, renew_guest_order
 from services.panel_registry import PanelRegistry
 from services.panel_resolve import ResellerPanelUnavailableError
 from services.quota import QuotaExceeded
@@ -59,17 +60,28 @@ async def guest_order_approve(
             return
 
         error: str | None = None
+        delivery = renewal = None
+        # Terms come from the order snapshot; the plan is only a fallback for
+        # orders placed before snapshots existed.
         plan = await session.get(Plan, order.plan_id)
         guest_config = await GuestSalesConfigRepository(session).get_or_create()
-        if plan is None:
+        has_terms = order.volume_gb is not None or plan is not None
+        if not has_terms:
             error = t.GUEST_ORDER_PLAN_DELETED
-        elif not guest_config.panel_id or not guest_config.inbound_ids:
+        elif order.kind != "renew" and (
+            not guest_config.panel_id or not guest_config.inbound_ids
+        ):
             error = t.GUEST_ORDER_NOT_CONFIGURED
         else:
             try:
-                record, delivery = await deliver_guest_order(
-                    session, panel_registry, order, plan, guest_config
-                )
+                if order.kind == "renew":
+                    record, renewal = await renew_guest_order(
+                        session, panel_registry, order, plan
+                    )
+                else:
+                    record, delivery = await deliver_guest_order(
+                        session, panel_registry, order, plan, guest_config
+                    )
             except (QuotaExceeded, XuiError, ResellerPanelUnavailableError) as e:
                 error = str(e) or t.INVALID_INPUT
             except Exception:
@@ -82,18 +94,24 @@ async def guest_order_approve(
 
         await orders.mark_approved(order.id, record.id)
 
-    delivery_text = format_delivery_message(record.email, delivery, created=True)
-    qr_markup = (
-        guest_vless_qr_kb(record.email, delivery.vless_configs)
-        if delivery.vless_configs
-        else None
-    )
+    if renewal is not None:
+        text = t.GUEST_RENEWED.format(
+            email=record.email,
+            total=format_bytes(renewal.new_total_bytes),
+            expiry=format_expiry(renewal.new_expiry_ms),
+        )
+        markup = guest_my_accounts_kb()
+        parse_mode = None
+    else:
+        text = format_delivery_message(record.email, delivery, created=True)
+        markup = guest_vless_qr_kb(record.email, delivery.vless_configs)
+        parse_mode = DELIVERY_PARSE_MODE
     try:
         await callback.bot.send_message(  # type: ignore[union-attr]
             order.telegram_id,
-            delivery_text,
-            parse_mode=DELIVERY_PARSE_MODE,
-            reply_markup=qr_markup,
+            text,
+            parse_mode=parse_mode,
+            reply_markup=markup,
         )
     except Exception as e:
         await callback.answer(f"تحویل داده شد اما ارسال به کاربر ناموفق بود: {e}", show_alert=True)
@@ -106,6 +124,11 @@ async def guest_order_approve(
                 order_id=order.id, telegram_id=order.telegram_id
             ),
         )
+    if renewal is not None and renewal.traffic_reset_failed:
+        await callback.answer(
+            t.GUEST_RENEW_RESET_FAILED.format(email=record.email), show_alert=True
+        )
+        return
     await callback.answer()
 
 

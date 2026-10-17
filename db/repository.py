@@ -16,6 +16,7 @@ from db.models import (
     ServiceTemplate,
     UsageAlertSent,
 )
+from services.client_volume import MIN_CLIENT_VOLUME_GB
 
 _MAX_TEMPLATE_NAME_LEN = 64
 
@@ -58,8 +59,11 @@ def normalize_plan_name(raw: str) -> str:
 
 
 def validate_plan_params(volume_gb: float, expiry_days: int, price_toman: int) -> None:
-    if volume_gb <= 0:
-        raise InvalidPlanError("حجم باید بزرگ‌تر از صفر باشد.")
+    if volume_gb < MIN_CLIENT_VOLUME_GB:
+        # Smaller plans could never be sold (services have a minimum volume).
+        raise InvalidPlanError(
+            f"حجم پلن باید حداقل {MIN_CLIENT_VOLUME_GB:g} GB باشد."
+        )
     if expiry_days < 0:
         raise InvalidPlanError("روز انقضا نمی‌تواند منفی باشد.")
     if price_toman <= 0:
@@ -1140,6 +1144,48 @@ class PlanRepository:
         await self.session.refresh(row)
         return row
 
+    async def update(
+        self,
+        plan_id: int,
+        *,
+        name: str | None = None,
+        volume_gb: float | None = None,
+        expiry_days: int | None = None,
+        price_toman: int | None = None,
+    ) -> Plan | None:
+        row = await self.session.get(Plan, plan_id)
+        if row is None:
+            return None
+        new_name = normalize_plan_name(name) if name is not None else row.name
+        new_volume = row.volume_gb if volume_gb is None else volume_gb
+        new_days = row.expiry_days if expiry_days is None else expiry_days
+        new_price = row.price_toman if price_toman is None else price_toman
+        validate_plan_params(new_volume, new_days, new_price)
+        row.name = new_name
+        row.volume_gb = new_volume
+        row.expiry_days = new_days
+        row.price_toman = new_price
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def move(self, plan_id: int, direction: int) -> bool:
+        """Swap a plan with its neighbour in display order (direction -1 up, +1 down)."""
+        plans = await self.list_all()
+        ids = [p.id for p in plans]
+        if plan_id not in ids:
+            return False
+        i = ids.index(plan_id)
+        j = i + (1 if direction > 0 else -1)
+        if j < 0 or j >= len(plans):
+            return False
+        plans[i], plans[j] = plans[j], plans[i]
+        # Re-number so duplicate/legacy sort_order values can't block moves.
+        for order, plan in enumerate(plans):
+            plan.sort_order = order
+        await self.session.commit()
+        return True
+
     async def set_active(self, plan_id: int, active: bool) -> Plan | None:
         row = await self.session.get(Plan, plan_id)
         if row is None:
@@ -1178,6 +1224,9 @@ class GuestOrderRepository:
         receipt_kind: str,
         receipt_file_id: str | None = None,
         receipt_text: str | None = None,
+        plan: Plan | None = None,
+        kind: str = "new",
+        target_client_record_id: int | None = None,
     ) -> GuestOrder:
         row = GuestOrder(
             telegram_id=telegram_id,
@@ -1187,6 +1236,11 @@ class GuestOrderRepository:
             receipt_kind=receipt_kind,
             receipt_file_id=receipt_file_id,
             receipt_text=receipt_text,
+            kind=kind,
+            target_client_record_id=target_client_record_id,
+            volume_gb=plan.volume_gb if plan else None,
+            expiry_days=plan.expiry_days if plan else None,
+            price_toman=plan.price_toman if plan else None,
         )
         self.session.add(row)
         await self.session.commit()
@@ -1243,6 +1297,32 @@ class GuestOrderRepository:
         )
         await self.session.commit()
         return result.rowcount == 1
+
+    async def list_delivered_records(self, telegram_id: int) -> list[ClientRecord]:
+        """Accounts delivered (or renewed) for this guest, newest first."""
+        result = await self.session.scalars(
+            select(ClientRecord)
+            .join(GuestOrder, GuestOrder.client_record_id == ClientRecord.id)
+            .where(
+                GuestOrder.telegram_id == telegram_id,
+                GuestOrder.status == "approved",
+            )
+            .group_by(ClientRecord.id)
+            .order_by(ClientRecord.id.desc())
+        )
+        return list(result.all())
+
+    async def owns_record(self, telegram_id: int, record_id: int) -> bool:
+        found = await self.session.scalar(
+            select(GuestOrder.id)
+            .where(
+                GuestOrder.telegram_id == telegram_id,
+                GuestOrder.status == "approved",
+                GuestOrder.client_record_id == record_id,
+            )
+            .limit(1)
+        )
+        return found is not None
 
     async def user_owns_service(self, telegram_id: int, email: str) -> bool:
         """True if email is the service delivered for one of this guest's orders."""

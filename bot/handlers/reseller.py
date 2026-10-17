@@ -8,6 +8,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
+from bot.utils.markdown import escape_md
 from bot.utils.numbers import parse_days, parse_number
 from bot.config import get_settings
 from bot.keyboards import labels as btn
@@ -2328,13 +2329,6 @@ async def service_delete_cancel(
         await answer_resolve_callback(callback, e)
         return
     await callback.answer()
-
-
-def escape_md(text: str) -> str:
-    """Escape user text for Telegram legacy Markdown (parse_mode="Markdown")."""
-    for ch in ("_", "*", "`", "["):
-        text = text.replace(ch, "\\" + ch)
-    return text
 
 
 def _comment_display(comment: str) -> str:

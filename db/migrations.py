@@ -295,6 +295,23 @@ def migrate_009_resellers_is_system(sync_conn: Any) -> None:
         )
 
 
+def migrate_010_guest_orders_snapshot(sync_conn: Any) -> None:
+    cursor = sync_conn.execute(text("PRAGMA table_info(guest_orders)"))
+    columns = [row[1] for row in cursor.fetchall()]
+    additions = {
+        "kind": "VARCHAR(16) NOT NULL DEFAULT 'new'",
+        "target_client_record_id": "INTEGER",
+        "volume_gb": "FLOAT",
+        "expiry_days": "INTEGER",
+        "price_toman": "INTEGER",
+    }
+    for name, ddl in additions.items():
+        if name not in columns:
+            sync_conn.execute(
+                text(f"ALTER TABLE guest_orders ADD COLUMN {name} {ddl}")
+            )
+
+
 MIGRATIONS.extend(
     [
         (1, migrate_001_client_records_sub_id),
@@ -306,6 +323,7 @@ MIGRATIONS.extend(
         (7, migrate_007_reseller_panels),
         (8, migrate_008_unified_reseller_quota),
         (9, migrate_009_resellers_is_system),
+        (10, migrate_010_guest_orders_snapshot),
     ]
 )
 

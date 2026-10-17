@@ -476,11 +476,15 @@ class ResellerService:
         email: str,
         volume_gb: float,
         expiry_days: int,
+        *,
+        extend_from_current: bool = False,
     ) -> RenewServiceResult:
         """Redefine an existing service: reset usage, set new volume + expiry, enable.
 
         The full new volume is charged against the reseller quota, which is what
-        keeps this from being a free-traffic-reset backdoor.
+        keeps this from being a free-traffic-reset backdoor. Expiry is now + days,
+        or with extend_from_current max(now, current expiry) + days (guest
+        renewals: paying early must not lose the remaining days).
         """
         record = await self._get_owned_record(reseller, email)
         try:
@@ -491,7 +495,10 @@ class ResellerService:
             raise XuiError(str(e)) from e
 
         new_expiry_ms = 0
-        if expiry_days > 0:
+        if expiry_days > 0 and extend_from_current:
+            current = await self._current_expiry_ms(email, record)
+            new_expiry_ms = resolve_expiry_after_add_days(current, expiry_days)
+        elif expiry_days > 0:
             new_expiry_ms = int((time.time() + expiry_days * 86400) * 1000)
 
         # Panel first: if this fails nothing is charged and nothing is reset.
